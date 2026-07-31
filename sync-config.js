@@ -19,7 +19,7 @@
    user's Apple ID, and it only ever reaches that user's own private database.
 */
 window.CARD_VAULT_SYNC = {
-  containerIdentifier: "PASTE_YOUR_ICLOUD_CONTAINER_ID",
+  containerIdentifier: "iCloud.com.vishalparwani.cardvault",
   apiToken: "PASTE_YOUR_CLOUDKIT_WEB_API_TOKEN",
   environment: "development", // "development" | "production"
 };
