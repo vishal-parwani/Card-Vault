@@ -166,7 +166,9 @@
      type automatically in the development environment. */
   function isMissingSchema(x) {
     const s = [x && x.message, x && x.reason, x && x.serverErrorCode].join(" ").toLowerCase();
-    return s.includes("record type") || s.includes("unknown_item");
+    // Apple's wording is "could not find record_type with name 'Vault'".
+    // Match the underscore and spaced spellings both, so this survives rewording.
+    return /record[_ ]type/.test(s) || s.includes("unknown_item");
   }
 
   // Resolves with the stored payload object, or null when nothing is saved yet.
