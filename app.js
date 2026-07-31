@@ -473,6 +473,13 @@ function renderSyncSheet() {
   const nowBtn = document.getElementById("sync-now");
   if (nowBtn) nowBtn.disabled = SYNC.status === "syncing" || !CloudSync.signedIn();
 
+  const diagEl = document.getElementById("sync-diag");
+  if (diagEl) {
+    const d = CloudSync.diag();
+    diagEl.textContent = Object.keys(d).map((k) => `${k}: ${d[k]}`).join("\n") +
+      `\nsyncStatus: ${SYNC.status}${SYNC.msg ? " — " + SYNC.msg : ""}`;
+  }
+
   set("sync-hint", configured
     ? (SYNC.last
         ? `Last synced ${new Date(SYNC.last).toLocaleTimeString()}. Only encrypted data is uploaded — your master password never leaves this device.`
@@ -636,7 +643,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -654,6 +661,9 @@ document.addEventListener("click", async (e) => {
       render(); // now shows the lock screen for the restored vault
     } catch (ex) { setSync("error", ex.message || "Restore failed."); }
     return;
+  }
+  if (t.id === "sync-diag-copy") {
+    return copy(document.getElementById("sync-diag").textContent, "Diagnostics");
   }
   if (t.id === "sync-wipe-cloud") {
     if (!confirm("Delete the vault stored in iCloud? This device keeps its own copy.")) return;

@@ -1,4 +1,4 @@
-const CACHE = "card-vault-v3";
+const CACHE = "card-vault-v4";
 const ASSETS = [
   "./",
   "./index.html",
