@@ -24,6 +24,34 @@
 
   function cfg() { return window.CARD_VAULT_SYNC || {}; }
 
+  /* Diagnostics. CloudKit auth failures are otherwise indistinguishable from
+     "user never signed in", which makes misconfiguration impossible to debug. */
+  const DIAG = {
+    origin: location.origin,
+    href: location.href.slice(0, 300),
+    loaded: false,
+    ckVersion: "",
+    configured: false,
+    setUpAuth: "(not run)",
+    lastError: "",
+  };
+  function diag() {
+    const p = new URLSearchParams(location.search);
+    const ckParams = [...p.keys()].filter((k) => /^ck/i.test(k));
+    return {
+      ...DIAG,
+      env: cfg().environment,
+      container: cfg().containerIdentifier,
+      tokenLen: String(cfg().apiToken || "").length,
+      ckUrlParams: ckParams.length ? ckParams.join(",") : "(none)",
+      ckHash: /ck/i.test(location.hash) ? location.hash.slice(0, 80) : "(none)",
+    };
+  }
+  function note(e) {
+    DIAG.lastError = (e && (e.message || e.reason || e.ckErrorCode)) || String(e);
+    console.error("[CardVault sync]", e);
+  }
+
   function isConfigured() {
     const c = cfg();
     const both = String(c.containerIdentifier || "") + String(c.apiToken || "");
@@ -69,6 +97,8 @@
     if (initP) return initP;
     initP = (async () => {
       await loadScript();
+      DIAG.loaded = !!window.CloudKit;
+      DIAG.ckVersion = (window.CloudKit && window.CloudKit.version) || "(unknown)";
       const c = cfg();
       CloudKit.configure({
         containers: [{
@@ -82,14 +112,24 @@
           environment: c.environment === "production" ? "production" : "development",
         }],
       });
+      DIAG.configured = true;
       container = CloudKit.getDefaultContainer();
       db = container.privateCloudDatabase;
       // Renders Apple's sign-in button into #apple-sign-in-button and resolves
       // with the identity if a session is already persisted.
-      setIdentity(await container.setUpAuth());
+      let who = null;
+      try {
+        who = await container.setUpAuth();
+        DIAG.setUpAuth = who ? "identity returned" : "returned null (not signed in)";
+      } catch (e) {
+        DIAG.setUpAuth = "threw: " + ((e && (e.message || e.ckErrorCode)) || e);
+        note(e);
+        throw e;
+      }
+      setIdentity(who);
       watchAuth();
       return identity;
-    })().catch((e) => { initP = null; throw e; });
+    })().catch((e) => { initP = null; note(e); throw e; });
     return initP;
   }
 
@@ -158,6 +198,7 @@
 
   window.CloudSync = {
     isConfigured,
+    diag,
     deleteRemote,
     init,
     onChange,
