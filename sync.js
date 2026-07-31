@@ -146,8 +146,19 @@
     changeTag = (saved && saved.recordChangeTag) || null;
   }
 
+  // Remove the vault record entirely. Missing record counts as success.
+  async function deleteRemote() {
+    const res = await db.deleteRecords([{ recordName: RECORD_NAME }]);
+    changeTag = null;
+    if (res.hasErrors) {
+      const e = res.errors[0];
+      if (!isNotFound(e)) throw ckError(e);
+    }
+  }
+
   window.CloudSync = {
     isConfigured,
+    deleteRemote,
     init,
     onChange,
     fetchRemote,

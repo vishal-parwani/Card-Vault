@@ -468,6 +468,7 @@ function renderSyncSheet() {
   show("sync-fork", SYNC.status === "fork");
   show("sync-auth-wrap", configured);
   show("sync-actions", configured);
+  show("sync-wipe-cloud", configured); // nothing in iCloud to delete until it is
 
   const nowBtn = document.getElementById("sync-now");
   if (nowBtn) nowBtn.disabled = SYNC.status === "syncing" || !CloudSync.signedIn();
@@ -635,7 +636,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -653,6 +654,27 @@ document.addEventListener("click", async (e) => {
       render(); // now shows the lock screen for the restored vault
     } catch (ex) { setSync("error", ex.message || "Restore failed."); }
     return;
+  }
+  if (t.id === "sync-wipe-cloud") {
+    if (!confirm("Delete the vault stored in iCloud? This device keeps its own copy.")) return;
+    setSync("syncing");
+    try {
+      await CloudSync.init();
+      if (!CloudSync.signedIn()) throw new Error("Sign in to iCloud first.");
+      await CloudSync.deleteRemote();
+      setSync("idle");
+      toast("iCloud copy deleted");
+    } catch (ex) { setSync("error", ex.message || "Delete failed."); }
+    return;
+  }
+  if (t.id === "sync-wipe-local") {
+    if (!confirm("Erase this device's vault? Every card, the master password and Face ID unlock are removed permanently. This cannot be undone.")) return;
+    if (!confirm("Last check — this is irreversible. Erase everything on this device?")) return;
+    await idbClear();
+    META = null; DEK = null; CARDS = []; DELETED = [];
+    closeSync();
+    toast("Vault erased");
+    return go("list"); // no META now, so this lands on the setup screen
   }
   if (t.id === "sync-take-local") {
     if (!confirm("Replace the iCloud copy with this device's vault? The vault currently in iCloud will be lost.")) return;
@@ -807,6 +829,12 @@ window.addEventListener("online", () => scheduleSync());
 
 /* ---------- boot ---------- */
 (async function boot() {
+  // Browsers evict "script-writable" storage from idle sites, which for this
+  // app means the vault itself. Ask to be exempt; ignored where unsupported.
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+
   await loadMeta();
   VIEW = { name: "list", cardId: null };
   render();
