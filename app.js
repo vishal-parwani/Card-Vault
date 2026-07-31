@@ -649,7 +649,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -666,6 +666,19 @@ document.addEventListener("click", async (e) => {
       toast("Restored from iCloud");
       render(); // now shows the lock screen for the restored vault
     } catch (ex) { setSync("error", ex.message || "Restore failed."); }
+    return;
+  }
+  if (t.id === "sync-selftest") {
+    const box = document.getElementById("sync-diag");
+    t.disabled = true; box.value = "Running self-test…";
+    try {
+      const r = await CloudSync.selfTest();
+      box.value = "== CloudKit REST self-test ==\n" +
+        Object.keys(r).map((k) => `${k}: ${r[k]}`).join("\n");
+    } catch (ex) {
+      box.value = "self-test failed: " + ((ex && ex.message) || ex);
+    }
+    t.disabled = false;
     return;
   }
   if (t.id === "sync-diag-copy") {

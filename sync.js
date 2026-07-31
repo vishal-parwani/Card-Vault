@@ -45,8 +45,45 @@
       tokenLen: String(cfg().apiToken || "").length,
       ckUrlParams: ckParams.length ? ckParams.join(",") : "(none)",
       ckHash: /ck/i.test(location.hash) ? location.hash.slice(0, 80) : "(none)",
+      capturedWebAuthToken: redact(captureWebAuthToken()),
     };
   }
+  /* Apple redirects back with ?ckWebAuthToken=... after sign-in. Capture it
+     ourselves so it survives navigation regardless of what CloudKit JS does
+     with it — this is also the credential the REST self-test needs. */
+  const WEB_AUTH_KEY = "cardvault.ckWebAuthToken";
+  function captureWebAuthToken() {
+    try {
+      const t = new URLSearchParams(location.search).get("ckWebAuthToken");
+      if (t) localStorage.setItem(WEB_AUTH_KEY, t);
+      return t || localStorage.getItem(WEB_AUTH_KEY) || "";
+    } catch { return ""; }
+  }
+  // Never print the session credential itself — only enough to identify it.
+  const redact = (s) => (s ? `${s.slice(0, 6)}…(${s.length} chars)` : "(none)");
+
+  /* Calls CloudKit Web Services directly, bypassing CloudKit JS. Distinguishes
+     "container/token/origin are wrong" from "the library mishandles the token". */
+  async function selfTest() {
+    const c = cfg();
+    const env = c.environment === "production" ? "production" : "development";
+    const webAuth = captureWebAuthToken();
+    const base = `https://api.apple-cloudkit.com/database/1/${encodeURIComponent(c.containerIdentifier)}/${env}/private/users/current`;
+    const qs = new URLSearchParams({ ckAPIToken: c.apiToken });
+    if (webAuth) qs.set("ckWebAuthToken", webAuth);
+    const out = { env, webAuthToken: redact(webAuth), url: `${base}?ckAPIToken=…${webAuth ? "&ckWebAuthToken=…" : ""}` };
+    try {
+      const res = await fetch(`${base}?${qs}`, { method: "GET" });
+      out.httpStatus = res.status;
+      out.body = (await res.text()).slice(0, 600);
+    } catch (e) {
+      // A CORS rejection lands here with an opaque message — itself diagnostic.
+      out.httpStatus = "fetch threw";
+      out.body = (e && e.message) || String(e);
+    }
+    return out;
+  }
+
   function note(e) {
     DIAG.lastError = (e && (e.message || e.reason || e.ckErrorCode)) || String(e);
     console.error("[CardVault sync]", e);
@@ -199,6 +236,8 @@
   window.CloudSync = {
     isConfigured,
     diag,
+    selfTest,
+    captureWebAuthToken,
     deleteRemote,
     init,
     onChange,
