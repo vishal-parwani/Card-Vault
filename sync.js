@@ -75,9 +75,19 @@
       return localStorage.getItem(WEB_AUTH_KEY) || "";
     } catch { return ""; }
   }
+  /* Listeners must only fire when the signed-in state actually changes.
+     init() runs on every sync, so notifying unconditionally here would make
+     each sync schedule the next one and spin forever. */
+  function setUser(name) {
+    const next = name || "";
+    const changed = userRecordName !== next;
+    userRecordName = next;
+    if (changed) notify();
+  }
   function clearAuth() {
-    webAuth = ""; userRecordName = "";
+    webAuth = "";
     try { localStorage.removeItem(WEB_AUTH_KEY); } catch {}
+    setUser("");
   }
 
   /* ---------- transport ---------- */
@@ -109,7 +119,6 @@
     if (res.status === 421 || res.status === 401) {
       if (json && json.redirectURL) redirectURL = json.redirectURL;
       clearAuth();
-      notify();
       const e = new Error("Sign in to iCloud to sync.");
       e.needsAuth = true;
       throw e;
@@ -128,8 +137,7 @@
     started = true;
     try {
       const r = await call("users/current");
-      userRecordName = (r && r.userRecordName) || "";
-      notify();
+      setUser((r && r.userRecordName) || "");
       return userRecordName;
     } catch (e) {
       if (e.needsAuth) return null; // expected when signed out; button appears
@@ -147,17 +155,34 @@
     location.href = redirectURL;
   }
 
-  function signOut() { clearAuth(); changeTag = null; notify(); }
+  function signOut() { changeTag = null; clearAuth(); }
 
   /* ---------- record I/O ---------- */
   function firstRecord(r) { return (r && r.records && r.records[0]) || null; }
 
+  /* Before the first save the Vault record type does not exist at all, and
+     CloudKit answers a lookup with "can't find record type" rather than
+     NOT_FOUND. That is still just "nothing stored yet" — saving creates the
+     type automatically in the development environment. */
+  function isMissingSchema(x) {
+    const s = [x && x.message, x && x.reason, x && x.serverErrorCode].join(" ").toLowerCase();
+    return s.includes("record type") || s.includes("unknown_item");
+  }
+
   // Resolves with the stored payload object, or null when nothing is saved yet.
   async function fetchRemote() {
-    const r = await call("records/lookup", { records: [{ recordName: RECORD_NAME }] });
+    let r;
+    try {
+      r = await call("records/lookup", { records: [{ recordName: RECORD_NAME }] });
+    } catch (e) {
+      if (isMissingSchema(e)) { changeTag = null; return null; }
+      throw e;
+    }
     const rec = firstRecord(r);
     if (!rec || rec.serverErrorCode) {
-      if (!rec || /NOT_FOUND/i.test(rec.serverErrorCode || "")) { changeTag = null; return null; }
+      if (!rec || /NOT_FOUND/i.test(rec.serverErrorCode || "") || isMissingSchema(rec)) {
+        changeTag = null; return null;
+      }
       throw new Error(rec.reason || rec.serverErrorCode);
     }
     changeTag = rec.recordChangeTag || null;
@@ -189,6 +214,10 @@
         const e = new Error("The iCloud copy changed — merging.");
         e.conflict = true;
         throw e;
+      }
+      if (isMissingSchema(rec)) {
+        throw new Error("CloudKit has no \"Vault\" record type in " + environment() +
+          ". In production you must deploy the schema from the CloudKit Console first.");
       }
       throw new Error((rec && (rec.reason || code)) || "Couldn't save to iCloud.");
     }
