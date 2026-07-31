@@ -467,6 +467,8 @@ function renderSyncSheet() {
   set("sync-err", SYNC.status === "error" || SYNC.status === "fork" ? SYNC.msg : "");
   show("sync-fork", SYNC.status === "fork");
   show("sync-auth-wrap", configured);
+  show("ck-signin", configured && !CloudSync.signedIn());
+  show("ck-signout", configured && CloudSync.signedIn());
   show("sync-actions", configured);
   show("sync-wipe-cloud", configured); // nothing in iCloud to delete until it is
 
@@ -649,7 +651,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -666,6 +668,18 @@ document.addEventListener("click", async (e) => {
       toast("Restored from iCloud");
       render(); // now shows the lock screen for the restored vault
     } catch (ex) { setSync("error", ex.message || "Restore failed."); }
+    return;
+  }
+  if (t.id === "ck-signin") {
+    setSync("syncing");
+    try { await CloudSync.signIn(); }           // navigates away to Apple
+    catch (ex) { setSync("error", ex.message || "Couldn't start sign-in."); }
+    return;
+  }
+  if (t.id === "ck-signout") {
+    CloudSync.signOut();
+    setSync("signedout");
+    toast("Signed out of iCloud");
     return;
   }
   if (t.id === "sync-selftest") {

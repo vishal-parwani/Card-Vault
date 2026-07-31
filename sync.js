@@ -1,198 +1,167 @@
-/* Card Vault — CloudKit JS adapter.
+/* Card Vault — CloudKit Web Services client.
 
-   Talks to the signed-in user's *private* CloudKit database and keeps one
-   record there. The record holds the same encrypted blob that sits in
-   IndexedDB: AES-GCM ciphertext plus the password-wrapped DEK. Apple stores
-   opaque bytes — the vault is unreadable without the master password.
+   Talks to the signed-in user's *private* CloudKit database over the REST API
+   and keeps one record there. The record holds the same encrypted blob that
+   sits in IndexedDB: AES-GCM ciphertext plus the password-wrapped DEK. Apple
+   stores opaque bytes — the vault is unreadable without the master password.
 
-   Everything here is best-effort. If the CDN is unreachable, the container
-   isn't configured, or the user never signs in, the app keeps working offline;
-   these calls just reject and the caller reports the reason.
+   This deliberately does NOT use CloudKit JS. That library was observed to
+   hold a valid ckWebAuthToken and still issue unauthenticated requests, which
+   Apple answers with 421 AUTHENTICATION_REQUIRED. The REST API accepts the
+   very same token and returns 200, so we drive auth ourselves:
+
+     1. GET users/current with ckAPIToken.
+     2. On 421, the body carries a redirectURL — send the browser there.
+     3. Apple redirects back with ?ckWebAuthToken=…; capture and store it.
+     4. Every later call passes ckAPIToken + ckWebAuthToken.
+
+   Dropping the library also removes the CDN dependency, so nothing external
+   has to load for the app to start.
 */
 (function () {
-  const CK_SRC = "https://cdn.apple-cloudkit.com/ck/2/cloudkit.js";
   const RECORD_TYPE = "Vault";
   const RECORD_NAME = "vault-v1";
-  const LOAD_TIMEOUT = 15000;
+  const WEB_AUTH_KEY = "cardvault.ckWebAuthToken";
 
-  let scriptP = null;      // in-flight CDN load
-  let initP = null;        // in-flight configure+auth
-  let container = null, db = null;
-  let identity = null;     // CloudKit userIdentity, or null when signed out
+  let webAuth = "";        // session credential from Apple, persisted locally
+  let userRecordName = ""; // set once authenticated
+  let redirectURL = "";    // Apple's sign-in URL, handed to us on a 421
   let changeTag = null;    // last seen recordChangeTag, for conflict detection
+  let started = false;
   const watchers = new Set();
 
   function cfg() { return window.CARD_VAULT_SYNC || {}; }
-
-  /* Diagnostics. CloudKit auth failures are otherwise indistinguishable from
-     "user never signed in", which makes misconfiguration impossible to debug. */
-  const DIAG = {
-    origin: location.origin,
-    href: location.href.slice(0, 300),
-    loaded: false,
-    ckVersion: "",
-    configured: false,
-    setUpAuth: "(not run)",
-    lastError: "",
-  };
-  function diag() {
-    const p = new URLSearchParams(location.search);
-    const ckParams = [...p.keys()].filter((k) => /^ck/i.test(k));
-    return {
-      ...DIAG,
-      env: cfg().environment,
-      container: cfg().containerIdentifier,
-      tokenLen: String(cfg().apiToken || "").length,
-      ckUrlParams: ckParams.length ? ckParams.join(",") : "(none)",
-      ckHash: /ck/i.test(location.hash) ? location.hash.slice(0, 80) : "(none)",
-      capturedWebAuthToken: redact(captureWebAuthToken()),
-    };
-  }
-  /* Apple redirects back with ?ckWebAuthToken=... after sign-in. Capture it
-     ourselves so it survives navigation regardless of what CloudKit JS does
-     with it — this is also the credential the REST self-test needs. */
-  const WEB_AUTH_KEY = "cardvault.ckWebAuthToken";
-  function captureWebAuthToken() {
-    try {
-      const t = new URLSearchParams(location.search).get("ckWebAuthToken");
-      if (t) localStorage.setItem(WEB_AUTH_KEY, t);
-      return t || localStorage.getItem(WEB_AUTH_KEY) || "";
-    } catch { return ""; }
-  }
-  // Never print the session credential itself — only enough to identify it.
-  const redact = (s) => (s ? `${s.slice(0, 6)}…(${s.length} chars)` : "(none)");
-
-  /* Calls CloudKit Web Services directly, bypassing CloudKit JS. Distinguishes
-     "container/token/origin are wrong" from "the library mishandles the token". */
-  async function selfTest() {
-    const c = cfg();
-    const env = c.environment === "production" ? "production" : "development";
-    const webAuth = captureWebAuthToken();
-    const base = `https://api.apple-cloudkit.com/database/1/${encodeURIComponent(c.containerIdentifier)}/${env}/private/users/current`;
-    const qs = new URLSearchParams({ ckAPIToken: c.apiToken });
-    if (webAuth) qs.set("ckWebAuthToken", webAuth);
-    const out = { env, webAuthToken: redact(webAuth), url: `${base}?ckAPIToken=…${webAuth ? "&ckWebAuthToken=…" : ""}` };
-    try {
-      const res = await fetch(`${base}?${qs}`, { method: "GET" });
-      out.httpStatus = res.status;
-      out.body = (await res.text()).slice(0, 600);
-    } catch (e) {
-      // A CORS rejection lands here with an opaque message — itself diagnostic.
-      out.httpStatus = "fetch threw";
-      out.body = (e && e.message) || String(e);
-    }
-    return out;
-  }
-
-  function note(e) {
-    DIAG.lastError = (e && (e.message || e.reason || e.ckErrorCode)) || String(e);
-    console.error("[CardVault sync]", e);
-  }
-
   function isConfigured() {
     const c = cfg();
     const both = String(c.containerIdentifier || "") + String(c.apiToken || "");
     return !!(c.containerIdentifier && c.apiToken && !/PASTE_|YOUR_/.test(both));
   }
+  function environment() { return cfg().environment === "production" ? "production" : "development"; }
+  function apiBase() {
+    return `https://api.apple-cloudkit.com/database/1/${encodeURIComponent(cfg().containerIdentifier)}/${environment()}/private`;
+  }
 
   function notify() { watchers.forEach((fn) => { try { fn(); } catch {} }); }
   function onChange(fn) { watchers.add(fn); }
 
-  /* ---------- loading ---------- */
-  function loadScript() {
-    if (window.CloudKit) return Promise.resolve();
-    if (scriptP) return scriptP;
-    scriptP = new Promise((res, rej) => {
-      const fail = (msg) => { scriptP = null; rej(new Error(msg)); };
-      const timer = setTimeout(() => fail("Couldn't reach iCloud — check your connection."), LOAD_TIMEOUT);
-      // Listener goes on before the script does, so we can't miss the event.
-      window.addEventListener("cloudkitloaded", () => { clearTimeout(timer); res(); }, { once: true });
-      const s = document.createElement("script");
-      s.src = CK_SRC;
-      s.async = true;
-      s.onerror = () => { clearTimeout(timer); fail("Couldn't load iCloud — you may be offline."); };
-      document.head.appendChild(s);
-    });
-    return scriptP;
+  /* ---------- diagnostics ---------- */
+  const DIAG = { origin: location.origin, lastCall: "(none)", lastStatus: "", lastError: "" };
+  const redact = (s) => (s ? `${s.slice(0, 6)}…(${s.length} chars)` : "(none)");
+  function diag() {
+    return {
+      ...DIAG,
+      env: environment(),
+      container: cfg().containerIdentifier,
+      tokenLen: String(cfg().apiToken || "").length,
+      webAuthToken: redact(webAuth),
+      userRecordName: userRecordName || "(not signed in)",
+      haveRedirectURL: redirectURL ? "yes" : "no",
+      changeTag: changeTag || "(none)",
+    };
   }
 
-  function setIdentity(who) {
-    identity = who || null;
-    if (!identity) changeTag = null; // tags are per-account; drop on sign-out
-    notify();
-  }
-
-  // whenUserSignsIn/Out resolve once, so re-arm after each to keep tracking.
-  function watchAuth() {
-    if (!container) return;
-    container.whenUserSignsIn().then((who) => { setIdentity(who); watchAuth(); }, () => {});
-    container.whenUserSignsOut().then(() => { setIdentity(null); watchAuth(); }, () => {});
-  }
-
-  function init() {
-    if (!isConfigured()) return Promise.reject(new Error("iCloud sync isn't configured yet."));
-    if (initP) return initP;
-    initP = (async () => {
-      await loadScript();
-      DIAG.loaded = !!window.CloudKit;
-      DIAG.ckVersion = (window.CloudKit && window.CloudKit.version) || "(unknown)";
-      const c = cfg();
-      CloudKit.configure({
-        containers: [{
-          containerIdentifier: c.containerIdentifier,
-          apiTokenAuth: {
-            apiToken: c.apiToken,
-            persist: true, // remember the Apple ID between launches
-            signInButton: { id: "apple-sign-in-button", theme: "black" },
-            signOutButton: { id: "apple-sign-out-button", theme: "black" },
-          },
-          environment: c.environment === "production" ? "production" : "development",
-        }],
-      });
-      DIAG.configured = true;
-      container = CloudKit.getDefaultContainer();
-      db = container.privateCloudDatabase;
-      // Renders Apple's sign-in button into #apple-sign-in-button and resolves
-      // with the identity if a session is already persisted.
-      let who = null;
-      try {
-        who = await container.setUpAuth();
-        DIAG.setUpAuth = who ? "identity returned" : "returned null (not signed in)";
-      } catch (e) {
-        DIAG.setUpAuth = "threw: " + ((e && (e.message || e.ckErrorCode)) || e);
-        note(e);
-        throw e;
+  /* ---------- auth ---------- */
+  // Apple appends ?ckWebAuthToken=… on return. Store it and strip it from the
+  // URL so a session credential isn't left sitting in browser history.
+  function captureWebAuthToken() {
+    try {
+      const u = new URL(location.href);
+      const t = u.searchParams.get("ckWebAuthToken");
+      if (t) {
+        localStorage.setItem(WEB_AUTH_KEY, t);
+        u.searchParams.delete("ckWebAuthToken");
+        history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
       }
-      setIdentity(who);
-      watchAuth();
-      return identity;
-    })().catch((e) => { initP = null; note(e); throw e; });
-    return initP;
+      return localStorage.getItem(WEB_AUTH_KEY) || "";
+    } catch { return ""; }
+  }
+  function clearAuth() {
+    webAuth = ""; userRecordName = "";
+    try { localStorage.removeItem(WEB_AUTH_KEY); } catch {}
   }
 
-  /* ---------- errors ---------- */
-  function codeOf(e) { return (e && (e.ckErrorCode || e.serverErrorCode || e.reason)) || ""; }
-  function isNotFound(e) { return /NOT_FOUND/i.test(codeOf(e)); }
-  function isConflict(e) { return /CONFLICT|SERVER_RECORD_CHANGED/i.test(codeOf(e)); }
-  function ckError(e) {
-    const msg = (e && (e.reason || e.ckErrorCode || e.serverErrorCode)) || "iCloud request failed.";
-    const err = new Error(msg);
-    err.ckErrorCode = e && (e.ckErrorCode || e.serverErrorCode);
-    return err;
+  /* ---------- transport ---------- */
+  async function call(path, body) {
+    const p = new URLSearchParams({ ckAPIToken: cfg().apiToken });
+    if (webAuth) p.set("ckWebAuthToken", webAuth);
+    const url = `${apiBase()}/${path}?${p}`;
+    DIAG.lastCall = path;
+
+    let res, text;
+    try {
+      res = await fetch(url, body
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+        : { method: "GET" });
+      text = await res.text();
+    } catch (e) {
+      DIAG.lastStatus = "network/CORS failure";
+      DIAG.lastError = (e && e.message) || String(e);
+      throw new Error("Couldn't reach iCloud — you may be offline.");
+    }
+
+    DIAG.lastStatus = String(res.status);
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+
+    if (res.ok) return json;
+
+    // 421/401 mean "no valid credential". The body carries the sign-in URL.
+    if (res.status === 421 || res.status === 401) {
+      if (json && json.redirectURL) redirectURL = json.redirectURL;
+      clearAuth();
+      notify();
+      const e = new Error("Sign in to iCloud to sync.");
+      e.needsAuth = true;
+      throw e;
+    }
+    const msg = (json && (json.reason || json.serverErrorCode)) || `iCloud error ${res.status}`;
+    DIAG.lastError = msg;
+    const e = new Error(msg);
+    e.serverErrorCode = json && json.serverErrorCode;
+    throw e;
   }
+
+  // Resolves with the user record name, or null when sign-in is still needed.
+  async function init() {
+    if (!isConfigured()) throw new Error("iCloud sync isn't configured yet.");
+    webAuth = captureWebAuthToken();
+    started = true;
+    try {
+      const r = await call("users/current");
+      userRecordName = (r && r.userRecordName) || "";
+      notify();
+      return userRecordName;
+    } catch (e) {
+      if (e.needsAuth) return null; // expected when signed out; button appears
+      DIAG.lastError = e.message;
+      throw e;
+    }
+  }
+
+  async function signIn() {
+    if (!redirectURL) {
+      // Provokes a 421 whose body carries a fresh redirectURL.
+      try { await call("users/current"); } catch {}
+    }
+    if (!redirectURL) throw new Error("Couldn't start iCloud sign-in. Try again.");
+    location.href = redirectURL;
+  }
+
+  function signOut() { clearAuth(); changeTag = null; notify(); }
 
   /* ---------- record I/O ---------- */
+  function firstRecord(r) { return (r && r.records && r.records[0]) || null; }
+
   // Resolves with the stored payload object, or null when nothing is saved yet.
   async function fetchRemote() {
-    const res = await db.fetchRecords([RECORD_NAME]);
-    if (res.hasErrors) {
-      const e = res.errors[0];
-      if (isNotFound(e)) { changeTag = null; return null; }
-      throw ckError(e);
+    const r = await call("records/lookup", { records: [{ recordName: RECORD_NAME }] });
+    const rec = firstRecord(r);
+    if (!rec || rec.serverErrorCode) {
+      if (!rec || /NOT_FOUND/i.test(rec.serverErrorCode || "")) { changeTag = null; return null; }
+      throw new Error(rec.reason || rec.serverErrorCode);
     }
-    const rec = res.records && res.records[0];
-    if (!rec || !rec.fields || !rec.fields.payload) { changeTag = null; return null; }
     changeTag = rec.recordChangeTag || null;
+    if (!rec.fields || !rec.fields.payload) return null;
     try {
       return JSON.parse(rec.fields.payload.value);
     } catch {
@@ -202,53 +171,69 @@
 
   // Throws err.conflict === true when someone else wrote since our last fetch.
   async function saveRemote(payload) {
-    const rec = {
+    const record = {
       recordType: RECORD_TYPE,
       recordName: RECORD_NAME,
       fields: { payload: { value: JSON.stringify(payload) } },
     };
-    if (changeTag) rec.recordChangeTag = changeTag;
-    const res = await db.saveRecords([rec]);
-    if (res.hasErrors) {
-      const e = res.errors[0];
-      if (isConflict(e)) {
+    if (changeTag) record.recordChangeTag = changeTag;
+    const r = await call("records/modify", {
+      operations: [{ operationType: changeTag ? "update" : "create", record }],
+    });
+    const rec = firstRecord(r);
+    if (!rec || rec.serverErrorCode) {
+      const code = (rec && rec.serverErrorCode) || "";
+      // EXISTS means a record is already there and our "create" lost the race.
+      if (/CONFLICT|EXISTS|SERVER_RECORD_CHANGED/i.test(code)) {
         changeTag = null; // force a re-fetch before the retry
-        const err = new Error("The iCloud copy changed — merging.");
-        err.conflict = true;
-        throw err;
+        const e = new Error("The iCloud copy changed — merging.");
+        e.conflict = true;
+        throw e;
       }
-      throw ckError(e);
+      throw new Error((rec && (rec.reason || code)) || "Couldn't save to iCloud.");
     }
-    const saved = res.records && res.records[0];
-    changeTag = (saved && saved.recordChangeTag) || null;
+    changeTag = rec.recordChangeTag || null;
   }
 
-  // Remove the vault record entirely. Missing record counts as success.
+  // Remove the vault record entirely. A missing record counts as success.
   async function deleteRemote() {
-    const res = await db.deleteRecords([{ recordName: RECORD_NAME }]);
+    const r = await call("records/modify", {
+      operations: [{ operationType: "forceDelete", record: { recordName: RECORD_NAME } }],
+    });
     changeTag = null;
-    if (res.hasErrors) {
-      const e = res.errors[0];
-      if (!isNotFound(e)) throw ckError(e);
+    const rec = firstRecord(r);
+    if (rec && rec.serverErrorCode && !/NOT_FOUND/i.test(rec.serverErrorCode)) {
+      throw new Error(rec.reason || rec.serverErrorCode);
     }
+  }
+
+  /* Raw probe used by the diagnostics panel. */
+  async function selfTest() {
+    const p = new URLSearchParams({ ckAPIToken: cfg().apiToken });
+    const tok = captureWebAuthToken();
+    if (tok) p.set("ckWebAuthToken", tok);
+    const out = {
+      env: environment(),
+      webAuthToken: redact(tok),
+      url: `${apiBase()}/users/current?ckAPIToken=…${tok ? "&ckWebAuthToken=…" : ""}`,
+    };
+    try {
+      const res = await fetch(`${apiBase()}/users/current?${p}`);
+      out.httpStatus = res.status;
+      out.body = (await res.text()).slice(0, 600);
+    } catch (e) {
+      out.httpStatus = "fetch threw";
+      out.body = (e && e.message) || String(e);
+    }
+    return out;
   }
 
   window.CloudSync = {
-    isConfigured,
-    diag,
-    selfTest,
-    captureWebAuthToken,
-    deleteRemote,
-    init,
-    onChange,
-    fetchRemote,
-    saveRemote,
-    ready: () => !!db,
-    signedIn: () => !!identity,
-    who: () => {
-      if (!identity) return "";
-      const n = identity.nameComponents || {};
-      return [n.givenName, n.familyName].filter(Boolean).join(" ") || identity.emailAddress || "your Apple ID";
-    },
+    isConfigured, init, onChange, diag, selfTest,
+    signIn, signOut, captureWebAuthToken,
+    fetchRemote, saveRemote, deleteRemote,
+    ready: () => started,
+    signedIn: () => !!userRecordName,
+    who: () => (userRecordName ? "iCloud" : ""),
   };
 })();
