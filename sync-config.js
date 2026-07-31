@@ -20,6 +20,6 @@
 */
 window.CARD_VAULT_SYNC = {
   containerIdentifier: "iCloud.com.vishalparwani.cardvault",
-  apiToken: "PASTE_YOUR_CLOUDKIT_WEB_API_TOKEN",
+  apiToken: "050db293176650121c6c1117d0d68c27dcee757ed7eaf9b6c188ca949ed8cf64",
   environment: "development", // "development" | "production"
 };
