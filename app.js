@@ -4,7 +4,8 @@
      - The DEK is wrapped (encrypted) twice: once by a key derived from the master
        password (PBKDF2), once by a key derived from WebAuthn PRF output (Face ID).
      - Either unlock path recovers the same DEK. The DEK lives only in memory.
-   Nothing is ever sent anywhere. All data stays in this device's IndexedDB.
+   Cleartext never leaves this device. Optional iCloud sync (see sync.js) copies
+   only the ciphertext and the password-wrapped DEK, so Apple stores opaque bytes.
 */
 
 const enc = new TextEncoder();
@@ -124,28 +125,75 @@ async function getPrfBytes(credId) {
 }
 
 /* ---------- vault state ---------- */
-let META = null;      // { pw:{salt,wrapped}, prf:{credId,wrapped}|null, vault:{iv,ct} }
+let META = null;      // { dekId, pw:{salt,wrapped}, prf:{credId,wrapped}|null, vault:{iv,ct}, updatedAt }
 let DEK = null;       // in-memory only
 let CARDS = [];       // decrypted card list (in memory only)
+let DELETED = [];     // [{id, at}] tombstones, so deletions survive a merge
+
+// Tombstones are kept long enough for any device to see them, then dropped.
+const TOMBSTONE_TTL = 180 * 24 * 60 * 60 * 1000;
 
 async function loadMeta() { META = (await idbGet("meta")) || null; }
-async function saveVault() {
-  META.vault = await encJSON(DEK, CARDS);
+
+/* The plaintext vault used to be a bare card array; it is now
+   { v, cards, deleted } so deletions can be merged across devices. */
+function normalizeVault(x) {
+  if (Array.isArray(x)) return { v: 1, cards: x.map(migrateCard), deleted: [] };
+  if (!x || typeof x !== "object") return { v: 1, cards: [], deleted: [] };
+  return { v: 1, cards: (x.cards || []).map(migrateCard), deleted: x.deleted || [] };
+}
+
+/* Cards predating sync have no timestamps. uid() starts with a base-36
+   millisecond stamp, so creation time is recoverable from the id itself. */
+function migrateCard(c) {
+  if (c.createdAt && c.updatedAt) return c;
+  let born = 0;
+  const stamp = parseInt(String(c.id || "").slice(0, -5), 36);
+  if (Number.isFinite(stamp) && stamp > 0) born = stamp;
+  return { ...c, createdAt: c.createdAt || born, updatedAt: c.updatedAt || c.createdAt || born };
+}
+
+function currentVault() { return { v: 1, cards: CARDS, deleted: DELETED }; }
+
+// Fingerprint of the DEK. Lets sync tell "same vault, different edits" (mergeable)
+// apart from "two unrelated vaults" (not mergeable) without exposing the key.
+async function dekFingerprint(dek) {
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", dek));
+  const tag = enc.encode("card-vault.dek-id.v1");
+  const salted = new Uint8Array(tag.length + raw.length);
+  salted.set(tag, 0);
+  salted.set(raw, tag.length);
+  return b64(await crypto.subtle.digest("SHA-256", salted)).slice(0, 22);
+}
+
+// Re-encrypt the in-memory vault and persist it. Requires an unlocked DEK.
+async function persistLocal() {
+  META.vault = await encJSON(DEK, currentVault());
+  META.updatedAt = Date.now();
+  if (!META.dekId) META.dekId = await dekFingerprint(DEK);
   await idbSet("meta", META);
 }
-function lock() { DEK = null; CARDS = []; render(); }
+async function saveVault() {
+  await persistLocal();
+  scheduleSync();
+}
+function lock() { DEK = null; CARDS = []; DELETED = []; render(); }
 
 /* ---------- setup / unlock ---------- */
 async function setupVault(password, enableFaceId) {
   DEK = await genDek();
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  META = { pw: { salt: b64(salt), wrapped: await wrap(await pwKek(password, salt), DEK) }, prf: null, vault: null };
+  META = {
+    dekId: await dekFingerprint(DEK),
+    pw: { salt: b64(salt), wrapped: await wrap(await pwKek(password, salt), DEK) },
+    prf: null, vault: null, updatedAt: 0,
+  };
   if (enableFaceId) {
     const credId = await registerPasskey();
     const bytes = await getPrfBytes(credId);
     META.prf = { credId, wrapped: await wrap(await prfKek(bytes), DEK) };
   }
-  CARDS = [];
+  CARDS = []; DELETED = [];
   await saveVault();
 }
 async function addFaceId() {
@@ -154,15 +202,171 @@ async function addFaceId() {
   META.prf = { credId, wrapped: await wrap(await prfKek(bytes), DEK) };
   await idbSet("meta", META);
 }
+async function afterUnlock() {
+  const v = normalizeVault(META.vault ? await decJSON(DEK, META.vault) : null);
+  CARDS = v.cards; DELETED = v.deleted;
+  if (!META.dekId) { META.dekId = await dekFingerprint(DEK); await idbSet("meta", META); }
+  syncNow().catch(() => {}); // background pull/merge; never blocks unlock
+}
 async function unlockWithPassword(password) {
   const kek = await pwKek(password, unb64(META.pw.salt));
   DEK = await unwrap(kek, META.pw.wrapped); // throws if wrong password
-  CARDS = META.vault ? await decJSON(DEK, META.vault) : [];
+  await afterUnlock();
 }
 async function unlockWithFaceId() {
   const bytes = await getPrfBytes(META.prf.credId);
   DEK = await unwrap(await prfKek(bytes), META.prf.wrapped);
-  CARDS = META.vault ? await decJSON(DEK, META.vault) : [];
+  await afterUnlock();
+}
+
+/* ---------- merge ----------
+   Both sides decrypt to plaintext under the same DEK, so merging happens on
+   real card objects: newest edit per card id wins, and a tombstone removes a
+   card unless that card was edited after the deletion (an edit resurrects it).
+*/
+function mergeVaults(a, b) {
+  const tomb = new Map();
+  for (const t of [...(a.deleted || []), ...(b.deleted || [])]) {
+    const prev = tomb.get(t.id);
+    if (!prev || t.at > prev.at) tomb.set(t.id, t);
+  }
+  const byId = new Map();
+  for (const c of [...(a.cards || []), ...(b.cards || [])]) {
+    const prev = byId.get(c.id);
+    if (!prev || (c.updatedAt || 0) > (prev.updatedAt || 0)) byId.set(c.id, c);
+  }
+  const cards = [];
+  for (const c of byId.values()) {
+    const t = tomb.get(c.id);
+    if (t && t.at >= (c.updatedAt || 0)) continue;
+    cards.push(c);
+  }
+  // Stable, device-independent order so both sides converge on the same list.
+  cards.sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0) || (x.id < y.id ? -1 : 1));
+  const cutoff = Date.now() - TOMBSTONE_TTL;
+  const deleted = [...tomb.values()]
+    .filter((t) => t.at >= cutoff && !cards.some((c) => c.id === t.id))
+    .sort((x, y) => x.at - y.at);
+  return { v: 1, cards, deleted };
+}
+const vaultKey = (v) => JSON.stringify([v.cards, v.deleted]);
+
+/* ---------- iCloud sync ---------- */
+let SYNC = { status: "off", msg: "", last: 0, fork: false };
+let syncTimer = null, syncRunning = false, syncQueued = false;
+
+function setSync(status, msg) {
+  SYNC.status = status;
+  SYNC.msg = msg || "";
+  if (status === "ok") SYNC.last = Date.now();
+  if (status !== "fork") SYNC.fork = false;
+  renderSyncSheet();
+  const btn = document.querySelector("[data-sync]");
+  if (btn) btn.innerHTML = I.cloud(status);
+}
+
+function scheduleSync() {
+  if (!CloudSync.isConfigured()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow().catch(() => {}), 1500);
+}
+
+function localPayload() {
+  return {
+    v: 1, dekId: META.dekId, pw: META.pw, prf: META.prf,
+    vault: META.vault, updatedAt: META.updatedAt || 0,
+  };
+}
+
+async function syncNow() {
+  if (!CloudSync.isConfigured() || !META) return;
+  if (syncRunning) { syncQueued = true; return; }
+  syncRunning = true;
+  setSync("syncing");
+  try {
+    await CloudSync.init();
+    if (!CloudSync.signedIn()) { setSync("signedout"); return; }
+    await syncOnce(0);
+    if (SYNC.status === "syncing") setSync("ok");
+  } catch (e) {
+    if (e && e.fork) setSync("fork", e.message);
+    else setSync("error", (e && e.message) || "Sync failed.");
+  } finally {
+    syncRunning = false;
+    if (syncQueued) { syncQueued = false; scheduleSync(); }
+  }
+}
+
+async function syncOnce(attempt) {
+  const remote = await CloudSync.fetchRemote();
+
+  if (!remote) { await CloudSync.saveRemote(localPayload()); return; }
+
+  // Two independently created vaults have different DEKs; their ciphertexts are
+  // not interchangeable, so refuse to merge and let the user choose a winner.
+  if (remote.dekId && META.dekId && remote.dekId !== META.dekId) {
+    const err = new Error("This device and iCloud hold different vaults.");
+    err.fork = true;
+    throw err;
+  }
+
+  // Locked: we can't decrypt to merge, so only push if we're strictly newer.
+  if (!DEK) {
+    if ((remote.updatedAt || 0) < (META.updatedAt || 0)) await CloudSync.saveRemote(localPayload());
+    return;
+  }
+
+  let remoteVault;
+  try {
+    remoteVault = normalizeVault(remote.vault ? await decJSON(DEK, remote.vault) : null);
+  } catch {
+    const err = new Error("The iCloud copy can't be decrypted with this vault's key.");
+    err.fork = true;
+    throw err;
+  }
+
+  const local = currentVault();
+  const merged = mergeVaults(local, remoteVault);
+
+  if (vaultKey(merged) !== vaultKey(local)) {
+    CARDS = merged.cards; DELETED = merged.deleted;
+    await persistLocal();
+    render();
+  }
+  // Adopt a Face ID enrolment from iCloud only if this device has none —
+  // never clobber a passkey that already works here.
+  if (!META.prf && remote.prf) { META.prf = remote.prf; await idbSet("meta", META); }
+
+  if (vaultKey(merged) !== vaultKey(remoteVault) || !remote.pw) {
+    try {
+      await CloudSync.saveRemote(localPayload());
+    } catch (e) {
+      if (e && e.conflict && attempt < 3) return syncOnce(attempt + 1);
+      throw e;
+    }
+  }
+}
+
+/* Pull the iCloud vault and adopt it wholesale (new device, or "cloud wins"). */
+async function restoreFromCloud() {
+  await CloudSync.init();
+  if (!CloudSync.signedIn()) throw new Error("Sign in to iCloud first.");
+  const remote = await CloudSync.fetchRemote();
+  if (!remote || !remote.pw) throw new Error("No vault saved in iCloud yet.");
+  META = {
+    dekId: remote.dekId || null, pw: remote.pw, prf: remote.prf || null,
+    vault: remote.vault || null, updatedAt: remote.updatedAt || Date.now(),
+  };
+  await idbSet("meta", META);
+  DEK = null; CARDS = []; DELETED = [];
+}
+
+/* Overwrite the iCloud copy with this device's vault. */
+async function overwriteCloud() {
+  await CloudSync.init();
+  if (!CloudSync.signedIn()) throw new Error("Sign in to iCloud first.");
+  await CloudSync.fetchRemote().catch(() => null); // refresh the change tag
+  await CloudSync.saveRemote(localPayload());
 }
 
 /* ---------- clipboard ---------- */
@@ -211,6 +415,13 @@ const I = {
   eyeD: (on) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.6"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
   star: (on) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? "#D8B36A" : "none"}" stroke="${on ? "#D8B36A" : "rgba(255,255,255,0.7)"}" stroke-width="1.6"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9.1l6.9-.8L12 2z"/></svg>`,
   back: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>`,
+  cloud: (status) => {
+    const c = status === "ok" ? "#D8B36A" : status === "error" || status === "fork" ? "#E06B6B" : "#8A8F98";
+    const arrows = status === "syncing"
+      ? '<path d="M9.5 13.5l2.5-2.5 2.5 2.5"/>'
+      : status === "ok" ? '<path d="M9.5 12.5l1.8 1.8 3.4-3.6"/>' : "";
+    return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 0 1-.4-8A5.5 5.5 0 0 1 17.2 9.6 3.7 3.7 0 0 1 17 18H7z"/>${arrows}</svg>`;
+  },
 };
 
 /* ---------- toast ---------- */
@@ -227,6 +438,59 @@ const app = () => document.getElementById("app");
 let VIEW = { name: "boot", cardId: null };
 
 function go(name, cardId = null) { VIEW = { name, cardId }; render(); }
+
+/* ---------- sync sheet ----------
+   Updated field-by-field rather than by innerHTML: the Apple sign-in button is
+   injected into #apple-sign-in-button by CloudKit and must survive redraws. */
+let SHEET_OPEN = false;
+
+function syncStateText() {
+  if (!CloudSync.isConfigured()) return "Not configured";
+  switch (SYNC.status) {
+    case "syncing": return "Syncing…";
+    case "signedout": return "Not signed in to iCloud";
+    case "fork": return "Conflict";
+    case "error": return "Sync problem";
+    case "ok": return `Synced to ${CloudSync.who()}`;
+    default: return CloudSync.signedIn() ? `Signed in as ${CloudSync.who()}` : "Not signed in to iCloud";
+  }
+}
+
+function renderSyncSheet() {
+  const sheet = document.getElementById("sync-sheet");
+  if (!sheet || !SHEET_OPEN) return;
+  const configured = CloudSync.isConfigured();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const show = (id, on) => { const el = document.getElementById(id); if (el) el.hidden = !on; };
+
+  set("sync-state", syncStateText());
+  set("sync-err", SYNC.status === "error" || SYNC.status === "fork" ? SYNC.msg : "");
+  show("sync-fork", SYNC.status === "fork");
+  show("sync-auth-wrap", configured);
+  show("sync-actions", configured);
+
+  const nowBtn = document.getElementById("sync-now");
+  if (nowBtn) nowBtn.disabled = SYNC.status === "syncing" || !CloudSync.signedIn();
+
+  set("sync-hint", configured
+    ? (SYNC.last
+        ? `Last synced ${new Date(SYNC.last).toLocaleTimeString()}. Only encrypted data is uploaded — your master password never leaves this device.`
+        : "Only encrypted data is uploaded — your master password never leaves this device, and Apple can't read your cards.")
+    : "Add your CloudKit container and API token to sync-config.js, then redeploy. Until then the vault stays on this device only.");
+}
+
+function openSync() {
+  SHEET_OPEN = true;
+  document.getElementById("sync-sheet").hidden = false;
+  renderSyncSheet();
+  if (CloudSync.isConfigured()) {
+    CloudSync.init().then(renderSyncSheet, (e) => setSync("error", e.message));
+  }
+}
+function closeSync() {
+  SHEET_OPEN = false;
+  document.getElementById("sync-sheet").hidden = true;
+}
 
 function cardFaceSmall(c) {
   return `
@@ -266,7 +530,10 @@ function viewList() {
   app().innerHTML = `
     <div class="header">
       <div><h1>Cards</h1><div class="meta">${CARDS.length} saved · offline ready</div></div>
-      <button class="icon-btn" data-lock>${I.lockSm}</button>
+      <div class="hgroup">
+        <button class="icon-btn" data-sync>${I.cloud(SYNC.status)}</button>
+        <button class="icon-btn" data-lock>${I.lockSm}</button>
+      </div>
     </div>
     <div class="scroll">${body}</div>
     <button class="add-tile" data-add><span class="plus">+</span> Add card</button>`;
@@ -332,6 +599,7 @@ function viewSetup() {
         <div class="toggle on" data-t="face" id="s-face"><span>Enable Face ID unlock</span><div class="sw"><div class="knob"></div></div></div>
         <div class="err" id="s-err"></div>
         <button class="btn-primary" id="s-create">Create vault</button>
+        <button class="link" data-sync>Already have a vault? Restore from iCloud</button>
         <div class="hint">Your password is the only way to recover the vault if Face ID is ever removed. There is no reset — keep it safe.</div>
       </div>
     </div>`;
@@ -367,8 +635,32 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],#s-create,#u-face,#u-usepw,#u-pw-go");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local");
   if (!t) return;
+
+  /* ----- sync sheet ----- */
+  if (t.hasAttribute("data-sync")) return openSync();
+  if (t.id === "sync-close") return closeSync();
+  if (t.id === "sync-now") return void syncNow();
+  if (t.id === "sync-restore" || t.id === "sync-take-cloud") {
+    if (META && !confirm("Replace this device's vault with the iCloud copy? Anything saved only on this device will be lost.")) return;
+    setSync("syncing");
+    try {
+      await restoreFromCloud();
+      setSync("ok");
+      closeSync();
+      toast("Restored from iCloud");
+      render(); // now shows the lock screen for the restored vault
+    } catch (ex) { setSync("error", ex.message || "Restore failed."); }
+    return;
+  }
+  if (t.id === "sync-take-local") {
+    if (!confirm("Replace the iCloud copy with this device's vault? The vault currently in iCloud will be lost.")) return;
+    setSync("syncing");
+    try { await overwriteCloud(); setSync("ok"); toast("iCloud updated"); }
+    catch (ex) { setSync("error", ex.message || "Upload failed."); }
+    return;
+  }
 
   // list: open card
   if (t.dataset.open && !e.target.closest("[data-fav],[data-copy],[data-revealcvv]")) return go("detail", t.dataset.open);
@@ -376,7 +668,8 @@ document.addEventListener("click", async (e) => {
   // favourite toggle
   if (t.dataset.fav) {
     const c = CARDS.find((x) => x.id === t.dataset.fav);
-    c.favourite = !c.favourite; await saveVault(); render(); return;
+    c.favourite = !c.favourite; c.updatedAt = Date.now();
+    await saveVault(); render(); return;
   }
 
   // copy fields
@@ -424,6 +717,8 @@ document.addEventListener("click", async (e) => {
   if (t.dataset.del) {
     if (!confirm("Delete this card permanently?")) return;
     CARDS = CARDS.filter((x) => x.id !== t.dataset.del);
+    // Tombstone, so the deletion propagates instead of the card coming back.
+    DELETED = DELETED.filter((x) => x.id !== t.dataset.del).concat({ id: t.dataset.del, at: Date.now() });
     await saveVault(); return go("list");
   }
 
@@ -435,6 +730,8 @@ document.addEventListener("click", async (e) => {
     const g = (id) => document.getElementById(id).value.trim();
     const label = g("f-label"), number = g("f-number");
     if (!label || !number) { document.getElementById("f-err").textContent = "Label and card number are required."; return; }
+    const prev = t.dataset.save ? CARDS.find((x) => x.id === t.dataset.save) : null;
+    const now = Date.now();
     const rec = {
       id: t.dataset.save || uid(),
       label, network: document.getElementById("f-network").value,
@@ -442,10 +739,11 @@ document.addEventListener("click", async (e) => {
       favourite: document.querySelector('[data-t="fav"]').classList.contains("on"),
       type: document.querySelector('[data-t="addon"]').classList.contains("on") ? "addon" : "primary",
       accent: "#fff",
+      createdAt: (prev && prev.createdAt) || now,
+      updatedAt: now,
     };
-    if (t.dataset.save) {
-      const i = CARDS.findIndex((x) => x.id === t.dataset.save);
-      CARDS[i] = rec;
+    if (prev) {
+      CARDS[CARDS.findIndex((x) => x.id === t.dataset.save)] = rec;
     } else CARDS.push(rec);
     await saveVault(); toast("Saved"); return go("list");
   }
@@ -492,14 +790,40 @@ document.addEventListener("keydown", (e) => {
   if (go && document.getElementById("pw-wrap").style.display !== "none") go.click();
 });
 
+/* Signing in to iCloud hands off to Apple and backgrounds the app, which would
+   otherwise trip the auto-lock. Grant a short, user-initiated grace period. */
+let AUTH_UNTIL = 0;
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#sync-auth-wrap")) AUTH_UNTIL = Date.now() + 120000;
+});
+
 /* auto-lock when app is hidden/backgrounded */
-document.addEventListener("visibilitychange", () => { if (document.hidden && DEK) lock(); });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { AUTH_UNTIL = 0; return; }
+  if (DEK && Date.now() > AUTH_UNTIL) lock();
+});
+
+window.addEventListener("online", () => scheduleSync());
 
 /* ---------- boot ---------- */
 (async function boot() {
   await loadMeta();
   VIEW = { name: "list", cardId: null };
   render();
+
+  if (CloudSync.isConfigured()) {
+    CloudSync.onChange(() => {
+      renderSyncSheet();
+      // A fresh sign-in is the moment to reconcile with iCloud.
+      if (CloudSync.signedIn() && META) scheduleSync();
+      else if (!CloudSync.signedIn()) setSync("signedout");
+    });
+    CloudSync.init().then(
+      () => { if (META) syncNow().catch(() => {}); },
+      () => setSync("error", "iCloud unavailable offline.")
+    );
+  }
+
   if ("serviceWorker" in navigator) {
     try { await navigator.serviceWorker.register("./service-worker.js"); } catch {}
   }

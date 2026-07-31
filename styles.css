@@ -131,5 +131,27 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
   padding:9px 20px; border-radius:20px; font-weight:600; font-size:13px; z-index:50;
 }
 .empty { color:var(--dim); font-size:14px; text-align:center; padding:40px 20px; }
+
+/* sync sheet */
+.hgroup { display:flex; gap:8px; }
+#sync-sheet {
+  position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.6);
+  display:flex; align-items:flex-end; justify-content:center;
+  backdrop-filter: blur(3px);
+}
+#sync-sheet[hidden] { display:none; }
+.sheet-card {
+  width:100%; max-width:480px; background:var(--ink2);
+  border:1px solid var(--line); border-bottom:none;
+  border-radius:20px 20px 0 0; padding:20px 20px calc(24px + env(safe-area-inset-bottom));
+  display:flex; flex-direction:column; gap:14px;
+  max-height:88dvh; overflow-y:auto;
+}
+.sheet-h { display:flex; justify-content:space-between; align-items:center; }
+.sheet-h .icon-btn { font-size:20px; line-height:1; color:var(--dim); }
+.sync-state { font-size:13px; color:var(--dim); }
+.sync-auth { display:flex; flex-direction:column; gap:10px; align-items:stretch; }
+.sync-auth:empty { display:none; }
+.btn-ghost:disabled { opacity:.45; }
 .err { color:#E06B6B; font-size:12px; }
 .hint { color:var(--dim); font-size:12px; line-height:1.5; }

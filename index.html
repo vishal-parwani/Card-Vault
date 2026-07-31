@@ -17,7 +17,39 @@
 </head>
 <body>
   <div id="app"></div>
+
+  <!-- Sync sheet lives outside #app: re-rendering #app must not destroy the
+       sign-in button CloudKit injects into #apple-sign-in-button. -->
+  <div id="sync-sheet" hidden>
+    <div class="sheet-card">
+      <div class="sheet-h">
+        <div class="title-lg">iCloud Sync</div>
+        <button class="icon-btn" id="sync-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="sync-state" id="sync-state"></div>
+      <div class="sync-auth" id="sync-auth-wrap">
+        <div id="apple-sign-in-button"></div>
+        <div id="apple-sign-out-button"></div>
+      </div>
+      <div id="sync-actions" class="stack" style="max-width:none">
+        <button class="btn-ghost" id="sync-now">Sync now</button>
+        <button class="btn-ghost" id="sync-restore">Restore from iCloud</button>
+      </div>
+      <div id="sync-fork" hidden>
+        <div class="err">This device and iCloud hold two different vaults, created with different master passwords. They can't be merged — pick which one wins.</div>
+        <div class="stack" style="max-width:none;margin-top:10px">
+          <button class="btn-ghost" id="sync-take-cloud">Replace this device with the iCloud copy</button>
+          <button class="btn-ghost danger" id="sync-take-local">Replace iCloud with this device</button>
+        </div>
+      </div>
+      <div class="err" id="sync-err"></div>
+      <div class="hint" id="sync-hint"></div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
+  <script src="./sync-config.js"></script>
+  <script src="./sync.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
