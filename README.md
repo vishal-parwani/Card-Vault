@@ -47,7 +47,7 @@ Safari → Share → **Add to Home Screen**. Launch from the home-screen icon fo
 ## Files
 - `index.html` — shell
 - `app.js` — crypto, IndexedDB, WebAuthn PRF, merge logic, UI
-- `sync.js` — CloudKit JS adapter (auth, fetch/save, conflict detection)
+- `sync.js` — CloudKit Web Services client (auth flow, fetch/save, conflict detection)
 - `sync-config.js` — your CloudKit container + API token; edit this to enable sync
 - `styles.css` — styling
 - `manifest.webmanifest`, `service-worker.js`, `icons/` — PWA/offline
