@@ -475,9 +475,15 @@ function renderSyncSheet() {
 
   const diagEl = document.getElementById("sync-diag");
   if (diagEl) {
-    const d = CloudSync.diag();
-    diagEl.textContent = Object.keys(d).map((k) => `${k}: ${d[k]}`).join("\n") +
-      `\nsyncStatus: ${SYNC.status}${SYNC.msg ? " — " + SYNC.msg : ""}`;
+    let text;
+    try {
+      const d = CloudSync.diag ? CloudSync.diag() : { error: "stale sync.js — hard-reload the page" };
+      text = Object.keys(d).map((k) => `${k}: ${d[k]}`).join("\n") +
+        `\nsyncStatus: ${SYNC.status}${SYNC.msg ? " — " + SYNC.msg : ""}`;
+    } catch (e) {
+      text = "diagnostics failed: " + ((e && e.message) || e);
+    }
+    diagEl.value = text; // textarea, so it stays selectable if clipboard is denied
   }
 
   set("sync-hint", configured
@@ -663,7 +669,9 @@ document.addEventListener("click", async (e) => {
     return;
   }
   if (t.id === "sync-diag-copy") {
-    return copy(document.getElementById("sync-diag").textContent, "Diagnostics");
+    const box = document.getElementById("sync-diag");
+    box.focus(); box.select();
+    return copy(box.value, "Diagnostics");
   }
   if (t.id === "sync-wipe-cloud") {
     if (!confirm("Delete the vault stored in iCloud? This device keeps its own copy.")) return;
