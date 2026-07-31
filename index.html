@@ -44,6 +44,15 @@
       </div>
       <div class="err" id="sync-err"></div>
       <div class="hint" id="sync-hint"></div>
+
+      <details id="sync-danger">
+        <summary>Start fresh</summary>
+        <div class="stack" style="max-width:none;margin-top:12px">
+          <button class="btn-ghost danger" id="sync-wipe-cloud">Delete the iCloud copy</button>
+          <button class="btn-ghost danger" id="sync-wipe-local">Erase this device&rsquo;s vault</button>
+        </div>
+        <div class="hint" style="margin-top:10px">Both are permanent. Erasing this device removes its cards, master password and Face ID enrolment — there is no undo and no reset.</div>
+      </details>
     </div>
   </div>
 

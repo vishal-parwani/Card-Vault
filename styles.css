@@ -153,5 +153,10 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 .sync-auth { display:flex; flex-direction:column; gap:10px; align-items:stretch; }
 .sync-auth:empty { display:none; }
 .btn-ghost:disabled { opacity:.45; }
+#sync-danger { border-top:1px solid var(--line); padding-top:14px; }
+#sync-danger summary { font-size:13px; color:var(--dim); cursor:pointer; list-style:none; }
+#sync-danger summary::-webkit-details-marker { display:none; }
+#sync-danger summary::before { content:"⚠ "; }
+#sync-danger .btn-ghost { border-color:rgba(224,107,107,.35); }
 .err { color:#E06B6B; font-size:12px; }
 .hint { color:var(--dim); font-size:12px; line-height:1.5; }
