@@ -48,7 +48,9 @@ What scanning can't give you, and why:
 
 In LastPass: **Account Options → Advanced → Export → LastPass CSV File**. Then in Card Vault, tap **Import from LastPass** under the Add card button and pick the downloaded `.csv`.
 
-Only payment cards are imported — logins and notes in the same export are ignored. Number, cardholder, CVV, expiry and the favourite flag come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
+Only payment cards are imported — logins and secure notes in the same export are ignored. Number, cardholder, CVV, expiry, per-card notes and the favourite flag all come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
+
+**Add-on cards** are guessed, because LastPass has no field for them. A card whose name or notes mention "add-on", "supplementary" or similar is filed under Add-on cards; everything else lands under Your cards. It's a guess, so check the sections after importing — the toggle on the edit screen fixes any that landed wrong.
 
 The file is parsed in the page and never uploaded — importing works with no network at all. It does mean the export sitting in your Downloads folder is **plaintext card data**: delete it once the import looks right.
 

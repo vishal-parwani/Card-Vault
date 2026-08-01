@@ -167,3 +167,10 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
   word-break:break-all; background:rgba(0,0,0,.25); border:1px solid var(--line);
   border-radius:10px; padding:10px; margin:10px 0; max-height:40dvh; overflow:auto;
 }
+.fld textarea {
+  width:100%; background:var(--ink2); border:1px solid var(--line);
+  border-radius:12px; padding:13px 15px; color:var(--txt);
+  font-family:var(--sans); font-size:16px; outline:none; resize:vertical;
+}
+.fld textarea:focus { border-color: var(--gold); }
+.row .v.notes { font-family:var(--sans); font-size:14px; white-space:pre-wrap; line-height:1.5; }

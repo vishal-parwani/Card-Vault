@@ -481,6 +481,16 @@ function lpNetwork(type, number) {
   return detectNetwork(number) || "Other"; // fall back to the number itself
 }
 
+/* "Notes:" is the last key and its value runs to the end of the block, over as
+   many lines as the user wrote. Split there first, so a note containing
+   something like "Type: personal" can't be misread as a card field. */
+function lpSplit(extra) {
+  const s = String(extra || "");
+  const m = s.match(/(^|\n)Notes:/);
+  if (!m) return { head: s, notes: "" };
+  return { head: s.slice(0, m.index), notes: s.slice(m.index + m[0].length).trim() };
+}
+
 // Turn the "Key:value" block inside `extra` into a lookup.
 function lpFields(extra) {
   const out = {};
@@ -490,6 +500,13 @@ function lpFields(extra) {
     out[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
   }
   return out;
+}
+
+/* LastPass has no notion of an add-on/supplementary card, so it can only be
+   guessed from what the user wrote. A guess is safe here: it only preselects a
+   toggle that is one tap to correct. */
+function lpIsAddon(text) {
+  return /\b(add[- ]?on|addon|supplementary|supplementry|suppl)\b/i.test(text || "");
 }
 
 /* Returns { cards, skipped, total } — cards ready to merge, skipped counting
@@ -511,7 +528,8 @@ function parseLastPass(text, existing) {
     const extra = rows[r][iExtra] || "";
     if (!/notetype\s*:\s*credit card/i.test(extra)) continue;
     total++;
-    const f = lpFields(extra);
+    const { head, notes } = lpSplit(extra);
+    const f = lpFields(head);
     const number = (f["number"] || "").trim();
     const digits = number.replace(/\D/g, "");
     if (!digits) { skipped++; continue; }
@@ -525,8 +543,9 @@ function parseLastPass(text, existing) {
       expiry: lpExpiry(f["expiration date"]),
       cvv: (f["security code"] || "").trim(),
       name: (f["name on card"] || "").trim(),
+      notes,
       favourite: iFav >= 0 && String(rows[r][iFav]).trim() === "1",
-      type: "primary",
+      type: lpIsAddon(`${(iName >= 0 && rows[r][iName]) || ""} ${notes}`) ? "addon" : "primary",
       accent: "#fff",
       createdAt: now,
       updatedAt: now,
@@ -724,6 +743,7 @@ function viewDetail() {
       <div class="row"><div><div class="k">CVV</div><div class="v" data-fcvv>•••</div></div>
         <div class="acts"><button class="icon-btn" data-toggle="cvv">${I.eyeD(false)}</button><button class="icon-btn" data-copy="cvv" data-id="${c.id}">${I.copyGold}</button></div></div>
       <div class="row"><div><div class="k">Cardholder</div><div class="v">${esc(c.name)}</div></div></div>
+      ${c.notes ? `<div class="row"><div><div class="k">Notes</div><div class="v notes">${esc(c.notes)}</div></div></div>` : ""}
       <div class="row" style="border:none"><button class="link" data-edit="${c.id}">Edit</button>
         <button class="link danger" data-del="${c.id}">Delete card</button></div>
     </div>`;
@@ -746,6 +766,7 @@ function viewForm(editId) {
         <label class="fld"><span>CVV</span><input id="f-cvv" class="mono" inputmode="numeric" autocomplete="cc-csc" value="${c ? esc(c.cvv) : ""}" placeholder="•••"/></label>
       </div>
       <label class="fld"><span>Cardholder</span><input id="f-name" autocomplete="cc-name" value="${c ? esc(c.name) : ""}" placeholder="Name on card"/></label>
+      <label class="fld"><span>Notes</span><textarea id="f-notes" rows="3" placeholder="Anything else worth remembering">${c ? esc(c.notes) : ""}</textarea></label>
       <div class="split">
         <div class="toggle ${c && c.favourite ? "on" : ""}" data-t="fav"><span>Favourite</span><div class="sw"><div class="knob"></div></div></div>
         <div class="toggle ${c && c.type === "addon" ? "on" : ""}" data-t="addon"><span>Add-on card</span><div class="sw"><div class="knob"></div></div></div>
@@ -954,7 +975,7 @@ document.addEventListener("click", async (e) => {
     const rec = {
       id: t.dataset.save || uid(),
       label, network: document.getElementById("f-network").value,
-      number, expiry: g("f-expiry"), cvv: g("f-cvv"), name: g("f-name"),
+      number, expiry: g("f-expiry"), cvv: g("f-cvv"), name: g("f-name"), notes: g("f-notes"),
       favourite: document.querySelector('[data-t="fav"]').classList.contains("on"),
       type: document.querySelector('[data-t="addon"]').classList.contains("on") ? "addon" : "primary",
       accent: "#fff",
