@@ -44,6 +44,14 @@ What scanning can't give you, and why:
 - **CVV** is never returned by Apple's scanner, regardless of where it is printed on the card — the scanner emits only number, expiry and cardholder name, and Safari's own card autofill likewise never stores a CVV. Newer cards that print the CVV beside the number make no difference. Type it.
 - **Bank and product tier** (say "HDFC Infinia" or "Visa Infinite") aren't derivable offline. Only the network *family* is in the leading digits — Visa Platinum and Visa Infinite both begin with `4`. Resolving the tier needs an issuer (BIN) database: an online lookup would send part of your card number to a third party, and a bundled table would be stale and confidently wrong on exactly the cards that matter. So the label stays a field you type once.
 
+## Importing from LastPass
+
+In LastPass: **Account Options → Advanced → Export → LastPass CSV File**. Then in Card Vault, tap **Import from LastPass** under the Add card button and pick the downloaded `.csv`.
+
+Only payment cards are imported — logins and notes in the same export are ignored. Number, cardholder, CVV, expiry and the favourite flag come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
+
+The file is parsed in the page and never uploaded — importing works with no network at all. It does mean the export sitting in your Downloads folder is **plaintext card data**: delete it once the import looks right.
+
 ## Requirements
 - **Face ID unlock** needs WebAuthn PRF: iOS/iPadOS 18+ (Safari) or a recent Chrome. If unavailable, the app silently falls back to password-only and still works.
 - Must be served over **HTTPS** (GitHub Pages qualifies). WebAuthn won't run over plain HTTP.

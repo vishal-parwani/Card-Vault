@@ -425,6 +425,134 @@ function maskNum(num) {
 function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+/* ---------- LastPass import ----------
+   LastPass exports payment cards as secure notes: one CSV row per item, with
+   the card fields packed as "Key:value" lines inside the quoted `extra`
+   column. Parsing happens entirely in this page — the CSV is never uploaded.
+*/
+
+// Full RFC4180-ish parse: fields may be quoted and contain commas, newlines
+// and doubled quotes, all of which LastPass emits.
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+      continue;
+    }
+    if (ch === '"') { inQuotes = true; continue; }
+    if (ch === ",") { row.push(field); field = ""; continue; }
+    if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; continue; }
+    if (ch === "\r") continue;
+    field += ch;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+const LP_MONTHS = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+};
+
+// LastPass writes "January,2029" (or "01,2029"); empty is ",".
+function lpExpiry(raw) {
+  const parts = String(raw || "").split(",").map((x) => x.trim());
+  if (parts.length < 2) return "";
+  const [m, y] = parts;
+  if (!m || !y) return "";
+  const mm = LP_MONTHS[m.toLowerCase()] || parseInt(m, 10);
+  if (!mm || mm < 1 || mm > 12) return "";
+  return String(mm).padStart(2, "0") + "/" + String(y).trim().slice(-2);
+}
+
+function lpNetwork(type, number) {
+  const t = String(type || "").toLowerCase();
+  if (t.includes("visa")) return "Visa";
+  if (t.includes("master")) return "Mastercard";
+  if (t.includes("amex") || t.includes("american")) return "American Express";
+  if (t.includes("diner")) return "Diners Club";
+  if (t.includes("rupay")) return "RuPay";
+  return detectNetwork(number) || "Other"; // fall back to the number itself
+}
+
+// Turn the "Key:value" block inside `extra` into a lookup.
+function lpFields(extra) {
+  const out = {};
+  for (const line of String(extra || "").split("\n")) {
+    const i = line.indexOf(":");
+    if (i < 1) continue;
+    out[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  }
+  return out;
+}
+
+/* Returns { cards, skipped, total } — cards ready to merge, skipped counting
+   entries that duplicate a number already in the vault. */
+function parseLastPass(text, existing) {
+  const rows = parseCSV(text);
+  if (!rows.length) return { cards: [], skipped: 0, total: 0 };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (n) => header.indexOf(n);
+  const iName = col("name"), iExtra = col("extra"), iFav = col("fav");
+  if (iExtra < 0) return { cards: [], skipped: 0, total: 0 };
+
+  const seen = new Set((existing || []).map((c) => String(c.number || "").replace(/\D/g, "")).filter(Boolean));
+  const cards = [];
+  let total = 0, skipped = 0;
+  const now = Date.now();
+
+  for (let r = 1; r < rows.length; r++) {
+    const extra = rows[r][iExtra] || "";
+    if (!/notetype\s*:\s*credit card/i.test(extra)) continue;
+    total++;
+    const f = lpFields(extra);
+    const number = (f["number"] || "").trim();
+    const digits = number.replace(/\D/g, "");
+    if (!digits) { skipped++; continue; }
+    if (seen.has(digits)) { skipped++; continue; }
+    seen.add(digits);
+    cards.push({
+      id: uid(),
+      label: (iName >= 0 && rows[r][iName]) || f["name on card"] || "Imported card",
+      network: lpNetwork(f["type"], number),
+      number,
+      expiry: lpExpiry(f["expiration date"]),
+      cvv: (f["security code"] || "").trim(),
+      name: (f["name on card"] || "").trim(),
+      favourite: iFav >= 0 && String(rows[r][iFav]).trim() === "1",
+      type: "primary",
+      accent: "#fff",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  return { cards, skipped, total };
+}
+
+async function importLastPassFile(file) {
+  const text = await file.text();
+  const { cards, skipped, total } = parseLastPass(text, CARDS);
+  if (!total) {
+    alert("No payment cards found in that file.\n\nIn LastPass: Account Options → Advanced → Export → LastPass CSV File, then pick the downloaded .csv here.");
+    return;
+  }
+  if (!cards.length) {
+    toast(`Already have all ${skipped} card${skipped === 1 ? "" : "s"}`);
+    return;
+  }
+  CARDS = CARDS.concat(cards);
+  await saveVault();
+  render();
+  toast(skipped ? `Imported ${cards.length}, skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`
+                : `Imported ${cards.length} card${cards.length === 1 ? "" : "s"}`);
+}
+
 /* ---------- SVG icons ---------- */
 const I = {
   lock: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.6"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
@@ -573,7 +701,8 @@ function viewList() {
       </div>
     </div>
     <div class="scroll">${body}</div>
-    <button class="add-tile" data-add><span class="plus">+</span> Add card</button>`;
+    <button class="add-tile" data-add><span class="plus">+</span> Add card</button>
+    <button class="link" data-import style="margin-top:12px">Import from LastPass</button>`;
 }
 
 function viewDetail() {
@@ -673,7 +802,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -781,6 +910,7 @@ document.addEventListener("click", async (e) => {
 
   if (t.hasAttribute("data-lock")) return lock();
   if (t.hasAttribute("data-add")) return go("add");
+  if (t.hasAttribute("data-import")) return document.getElementById("lp-file").click();
   if (t.hasAttribute("data-back")) return go(DEK && VIEW.name !== "list" ? "list" : "list");
   if (t.dataset.edit) return go("edit", t.dataset.edit);
 
@@ -918,6 +1048,14 @@ document.addEventListener("click", (e) => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) { AUTH_UNTIL = 0; return; }
   if (DEK && Date.now() > AUTH_UNTIL) lock();
+});
+
+document.addEventListener("change", async (e) => {
+  if (!e.target || e.target.id !== "lp-file" || !e.target.files.length) return;
+  const file = e.target.files[0];
+  e.target.value = ""; // let the same file be picked again after a failed run
+  try { await importLastPassFile(file); }
+  catch (ex) { alert("Couldn't read that file: " + ((ex && ex.message) || ex)); }
 });
 
 window.addEventListener("online", () => scheduleSync());
