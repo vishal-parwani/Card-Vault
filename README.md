@@ -29,7 +29,7 @@ Off until you configure it. Fill in `sync-config.js` (it documents each step) wi
 **Caveats.**
 - Signing in hands off to Apple's page, which backgrounds the app. Auto-lock is suspended for two minutes after you tap sign-in so returning doesn't drop you at the lock screen; it resumes immediately afterwards.
 - CloudKit's `development` and `production` environments hold **separate data**. Test in development, then CloudKit Dashboard → *Deploy Schema to Production* and flip `environment` in `sync-config.js`.
-- The `Vault` record type is created automatically on the first save in development. Production needs that schema deployed before sync will work there.
+- **You must create the `Vault` record type by hand before the first sync.** Unlike the native SDK, CloudKit Web Services does not auto-create schema, even in development — the first save fails with `could not find record_type with name 'Vault'`. In the CloudKit Console: Schema → Record Types → **+** → name it `Vault`, add one **String** field called `payload`. No index is needed; the record is fetched by name, not by query. Repeat once per environment, or use *Deploy Schema to Production*.
 - Sync needs network. Offline, the app runs from cache as usual and syncs when you're back.
 
 ## Adding a card
