@@ -395,6 +395,27 @@ const GRADIENTS = {
 const NETWORKS = Object.keys(GRADIENTS);
 function gradientFor(network) { return GRADIENTS[network] || GRADIENTS.Other; }
 
+/* Issuer network from the card number's leading digits. Only the network
+   family is knowable offline — the product tier (Platinum, Infinite, …) lives
+   in an issuer database, so it is never guessed here. Returns null rather than
+   "Other" when unsure, so an uncertain guess never overwrites a real choice.
+   Discover's ranges are read as RuPay: Discover isn't offered, and the overlap
+   (60/65) is RuPay in practice for this vault. */
+function detectNetwork(num) {
+  const d = String(num || "").replace(/\D/g, "");
+  if (d.length < 2) return null;
+  if (/^4/.test(d)) return "Visa";
+  if (/^3[47]/.test(d)) return "American Express";
+  if (/^5[1-5]/.test(d)) return "Mastercard";
+  if (d.length >= 4) {
+    const four = parseInt(d.slice(0, 4), 10);
+    if (four >= 2221 && four <= 2720) return "Mastercard"; // newer Mastercard range
+  }
+  if (/^(36|38|39|30[0-5])/.test(d)) return "Diners Club";
+  if (/^(60|65|81|82|508)/.test(d)) return "RuPay";
+  return null;
+}
+
 /* ---------- helpers ---------- */
 function maskNum(num) {
   const p = (num || "").trim().split(/\s+/);
@@ -585,22 +606,22 @@ function viewForm(editId) {
   app().innerHTML = `
     <button class="back" data-back>${I.back} Cancel</button>
     <div class="title-lg" style="text-align:left;margin-bottom:18px">${c ? "Edit card" : "New card"}</div>
-    <div class="form">
-      <label class="fld"><span>Card label</span><input id="f-label" value="${c ? esc(c.label) : ""}" placeholder="e.g. HDFC Infinia"/></label>
+    <form class="form" id="card-form" onsubmit="return false" autocomplete="on">
+      <label class="fld"><span>Card label</span><input id="f-label" autocomplete="off" value="${c ? esc(c.label) : ""}" placeholder="e.g. HDFC Infinia"/></label>
       <label class="fld"><span>Network</span>
-        <select id="f-network" style="background:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:13px 15px;color:var(--txt);font-family:var(--sans);font-size:16px;">${netOpts}</select></label>
-      <label class="fld"><span>Card number</span><input id="f-number" class="mono" inputmode="numeric" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/></label>
+        <select id="f-network" ${c ? 'data-touched="1"' : ""} style="background:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:13px 15px;color:var(--txt);font-family:var(--sans);font-size:16px;">${netOpts}</select></label>
+      <label class="fld"><span>Card number</span><input id="f-number" class="mono" inputmode="numeric" autocomplete="cc-number" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/></label>
       <div class="split">
-        <label class="fld"><span>Expiry</span><input id="f-expiry" class="mono" value="${c ? esc(c.expiry) : ""}" placeholder="MM/YY"/></label>
-        <label class="fld"><span>CVV</span><input id="f-cvv" class="mono" inputmode="numeric" value="${c ? esc(c.cvv) : ""}" placeholder="•••"/></label>
+        <label class="fld"><span>Expiry</span><input id="f-expiry" class="mono" autocomplete="cc-exp" value="${c ? esc(c.expiry) : ""}" placeholder="MM/YY"/></label>
+        <label class="fld"><span>CVV</span><input id="f-cvv" class="mono" inputmode="numeric" autocomplete="cc-csc" value="${c ? esc(c.cvv) : ""}" placeholder="•••"/></label>
       </div>
-      <label class="fld"><span>Cardholder</span><input id="f-name" value="${c ? esc(c.name) : ""}" placeholder="Name on card"/></label>
+      <label class="fld"><span>Cardholder</span><input id="f-name" autocomplete="cc-name" value="${c ? esc(c.name) : ""}" placeholder="Name on card"/></label>
       <div class="split">
         <div class="toggle ${c && c.favourite ? "on" : ""}" data-t="fav"><span>Favourite</span><div class="sw"><div class="knob"></div></div></div>
         <div class="toggle ${c && c.type === "addon" ? "on" : ""}" data-t="addon"><span>Add-on card</span><div class="sw"><div class="knob"></div></div></div>
       </div>
       <div class="err" id="f-err"></div>
-    </div>
+    </form>
     <button class="btn-primary" data-save="${editId || ""}" style="margin-top:14px">${c ? "Save changes" : "Save card"}</button>`;
 }
 
@@ -848,6 +869,20 @@ document.addEventListener("click", async (e) => {
     catch (ex) { err.textContent = "Wrong password."; }
     return;
   }
+});
+
+/* Fill the network as the number is typed, or when iOS's card scanner drops a
+   number in. A manual pick wins: existing cards start marked as touched, so
+   re-scanning never silently rewrites a network the user chose. */
+document.addEventListener("input", (e) => {
+  if (!e.target || e.target.id !== "f-number") return;
+  const sel = document.getElementById("f-network");
+  if (!sel || sel.dataset.touched) return;
+  const n = detectNetwork(e.target.value);
+  if (n && sel.value !== n) sel.value = n;
+});
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "f-network") e.target.dataset.touched = "1";
 });
 
 // submit password on Enter
