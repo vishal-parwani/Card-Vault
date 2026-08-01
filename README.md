@@ -38,8 +38,10 @@ On iPhone/iPad, tapping the **Card number** field offers **Scan Credit Card** in
 
 The network is then detected from the card's leading digits and selected for you; picking one yourself always wins, and editing an existing card never rewrites its stored network.
 
+After a scan the CVV field is focused automatically, since that is the one value you always have to supply. Typing a number by hand never steals focus, and a CVV you have already entered is left alone.
+
 What scanning can't give you, and why:
-- **CVV** is on the back and isn't captured by any card scanner. Type it.
+- **CVV** is never returned by Apple's scanner, regardless of where it is printed on the card — the scanner emits only number, expiry and cardholder name, and Safari's own card autofill likewise never stores a CVV. Newer cards that print the CVV beside the number make no difference. Type it.
 - **Bank and product tier** (say "HDFC Infinia" or "Visa Infinite") aren't derivable offline. Only the network *family* is in the leading digits — Visa Platinum and Visa Infinite both begin with `4`. Resolving the tier needs an issuer (BIN) database: an online lookup would send part of your card number to a third party, and a bundled table would be stale and confidently wrong on exactly the cards that matter. So the label stays a field you type once.
 
 ## Requirements

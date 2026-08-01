@@ -602,6 +602,7 @@ function viewDetail() {
 
 function viewForm(editId) {
   const c = editId ? CARDS.find((x) => x.id === editId) : null;
+  numberDigits = c ? String(c.number || "").replace(/\D/g, "").length : 0;
   const netOpts = NETWORKS.map((n) => `<option ${c && c.network === n ? "selected" : ""}>${n}</option>`).join("");
   app().innerHTML = `
     <button class="back" data-back>${I.back} Cancel</button>
@@ -874,12 +875,26 @@ document.addEventListener("click", async (e) => {
 /* Fill the network as the number is typed, or when iOS's card scanner drops a
    number in. A manual pick wins: existing cards start marked as touched, so
    re-scanning never silently rewrites a network the user chose. */
+let numberDigits = 0; // reset in viewForm; used to spot a scan vs. typing
 document.addEventListener("input", (e) => {
   if (!e.target || e.target.id !== "f-number") return;
+
   const sel = document.getElementById("f-network");
-  if (!sel || sel.dataset.touched) return;
-  const n = detectNetwork(e.target.value);
-  if (n && sel.value !== n) sel.value = n;
+  if (sel && !sel.dataset.touched) {
+    const n = detectNetwork(e.target.value);
+    if (n && sel.value !== n) sel.value = n;
+  }
+
+  /* A scan or autofill lands many digits at once, where typing adds one at a
+     time. On that jump, move to CVV — the one field no scanner can fill — so
+     the keyboard is already waiting on it. Delayed slightly so iOS can finish
+     populating expiry and cardholder first. */
+  const digits = e.target.value.replace(/\D/g, "").length;
+  const scanned = digits - numberDigits >= 6;
+  numberDigits = digits;
+  if (!scanned) return;
+  const cvv = document.getElementById("f-cvv");
+  if (cvv && !cvv.value) setTimeout(() => { if (!cvv.value) cvv.focus(); }, 300);
 });
 document.addEventListener("change", (e) => {
   if (e.target && e.target.id === "f-network") e.target.dataset.touched = "1";
