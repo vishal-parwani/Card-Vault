@@ -555,10 +555,13 @@ function parseLastPass(text, existing) {
 }
 
 async function importLastPassFile(file) {
-  const text = await file.text();
+  return importLastPassText(await file.text());
+}
+
+async function importLastPassText(text) {
   const { cards, skipped, total } = parseLastPass(text, CARDS);
   if (!total) {
-    alert("No payment cards found in that file.\n\nIn LastPass: Account Options → Advanced → Export → LastPass CSV File, then pick the downloaded .csv here.");
+    alert("No payment cards found in that export.\n\nExport from the LastPass web vault on a computer (the phone app can't export): sidebar → Advanced Options → Export → LastPass CSV File.");
     return;
   }
   if (!cards.length) {
@@ -567,6 +570,7 @@ async function importLastPassFile(file) {
   }
   CARDS = CARDS.concat(cards);
   await saveVault();
+  closeImport();
   render();
   toast(skipped ? `Imported ${cards.length}, skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`
                 : `Imported ${cards.length} card${cards.length === 1 ? "" : "s"}`);
@@ -661,6 +665,14 @@ function renderSyncSheet() {
         ? `Last synced ${new Date(SYNC.last).toLocaleTimeString()}. Only encrypted data is uploaded — your master password never leaves this device.`
         : "Only encrypted data is uploaded — your master password never leaves this device, and Apple can't read your cards.")
     : "Add your CloudKit container and API token to sync-config.js, then redeploy. Until then the vault stays on this device only.");
+}
+
+function openImport() {
+  document.getElementById("import-sheet").hidden = false;
+}
+function closeImport() {
+  const sheet = document.getElementById("import-sheet");
+  if (sheet) sheet.hidden = true;
 }
 
 function openSync() {
@@ -823,7 +835,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],#s-create,#import-close,#import-file-btn,#import-paste-go,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -931,7 +943,17 @@ document.addEventListener("click", async (e) => {
 
   if (t.hasAttribute("data-lock")) return lock();
   if (t.hasAttribute("data-add")) return go("add");
-  if (t.hasAttribute("data-import")) return document.getElementById("lp-file").click();
+  if (t.hasAttribute("data-import")) return openImport();
+  if (t.id === "import-close") return closeImport();
+  if (t.id === "import-file-btn") return document.getElementById("lp-file").click();
+  if (t.id === "import-paste-go") {
+    const box = document.getElementById("import-text");
+    const text = box.value.trim();
+    if (!text) { toast("Paste the export text first"); return; }
+    try { await importLastPassText(text); box.value = ""; }
+    catch (ex) { alert("Couldn't read that text: " + ((ex && ex.message) || ex)); }
+    return;
+  }
   if (t.hasAttribute("data-back")) return go(DEK && VIEW.name !== "list" ? "list" : "list");
   if (t.dataset.edit) return go("edit", t.dataset.edit);
 

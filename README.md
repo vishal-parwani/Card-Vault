@@ -46,7 +46,9 @@ What scanning can't give you, and why:
 
 ## Importing from LastPass
 
-In LastPass: **Account Options → Advanced → Export → LastPass CSV File**. Then in Card Vault, tap **Import from LastPass** under the Add card button and pick the downloaded `.csv`.
+Export is available on LastPass Free, but only from the **web vault on a computer** — the iOS/Android apps have no export. Sign in at the web vault, expand the left sidebar, then **Advanced Options → Export → LastPass CSV File**, and re-enter your master password when prompted.
+
+In Card Vault, tap **Import from LastPass** under the Add card button. LastPass either downloads a `.csv` or prints the export as text in the browser, so the sheet takes both: pick the file, or paste the text straight in.
 
 Only payment cards are imported — logins and secure notes in the same export are ignored. Number, cardholder, CVV, expiry, per-card notes and the favourite flag all come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
 

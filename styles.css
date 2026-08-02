@@ -134,12 +134,12 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 
 /* sync sheet */
 .hgroup { display:flex; gap:8px; }
-#sync-sheet {
+.sheet {
   position:fixed; inset:0; z-index:60; background:rgba(0,0,0,.6);
   display:flex; align-items:flex-end; justify-content:center;
   backdrop-filter: blur(3px);
 }
-#sync-sheet[hidden] { display:none; }
+.sheet[hidden] { display:none; }
 .sheet-card {
   width:100%; max-width:480px; background:var(--ink2);
   border:1px solid var(--line); border-bottom:none;
@@ -174,3 +174,9 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 }
 .fld textarea:focus { border-color: var(--gold); }
 .row .v.notes { font-family:var(--sans); font-size:14px; white-space:pre-wrap; line-height:1.5; }
+#import-text {
+  width:100%; background:var(--ink2); border:1px solid var(--line); border-radius:12px;
+  padding:12px 14px; color:var(--txt); font-family:var(--mono); font-size:12px;
+  outline:none; resize:vertical;
+}
+#import-text:focus { border-color: var(--gold); }

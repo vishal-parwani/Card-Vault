@@ -20,7 +20,7 @@
 
   <!-- Sync sheet lives outside #app: re-rendering #app must not destroy the
        sign-in button CloudKit injects into #apple-sign-in-button. -->
-  <div id="sync-sheet" hidden>
+  <div id="sync-sheet" class="sheet" hidden>
     <div class="sheet-card">
       <div class="sheet-h">
         <div class="title-lg">iCloud Sync</div>
@@ -60,6 +60,21 @@
         </div>
         <div class="hint" style="margin-top:10px">Both are permanent. Erasing this device removes its cards, master password and Face ID enrolment — there is no undo and no reset.</div>
       </details>
+    </div>
+  </div>
+
+  <div id="import-sheet" class="sheet" hidden>
+    <div class="sheet-card">
+      <div class="sheet-h">
+        <div class="title-lg">Import from LastPass</div>
+        <button class="icon-btn" id="import-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="hint">In the LastPass <strong>web vault on a computer</strong> (not the phone app): sidebar &rarr; Advanced&nbsp;Options &rarr; Export &rarr; LastPass CSV File.</div>
+      <button class="btn-ghost" id="import-file-btn">Choose CSV file</button>
+      <div class="hint">If LastPass showed the export as text on screen instead of downloading a file, select all of it and paste it here:</div>
+      <textarea id="import-text" rows="6" placeholder="url,username,password,totp,extra,name,grouping,fav&#10;..."></textarea>
+      <button class="btn-ghost" id="import-paste-go">Import pasted text</button>
+      <div class="hint">Only payment cards are read. Nothing is uploaded &mdash; the text is parsed on this device.</div>
     </div>
   </div>
 
