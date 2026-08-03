@@ -1648,7 +1648,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "29";
+const APP_VERSION = "30";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
@@ -1788,6 +1788,21 @@ function privacyShield(on) {
    asking for a tap first. Safari may refuse WebAuthn without a user gesture, so
    this is best-effort: on refusal the lock screen's button is still there. */
 let FACE_BUSY = false;
+/* The version check is a network round trip, and the automatic Face ID sheet
+   used to open long before it answered — so UPDATE_PENDING was still false and
+   the guard never fired. Wait for the check, but only briefly: a slow or dead
+   network must not leave the user staring at a lock screen. */
+const VERSION_GATE_MS = 1500;
+async function gateAutoFaceId() {
+  try {
+    await Promise.race([
+      checkVersion(),
+      new Promise((r) => setTimeout(r, VERSION_GATE_MS)),
+    ]);
+  } catch {}
+  maybeAutoFaceId();
+}
+
 async function maybeAutoFaceId() {
   // An update announcement outranks the automatic unlock: the Face ID sheet
   // covers the screen, so prompting first meant the bar was never seen. The
@@ -1814,7 +1829,7 @@ document.addEventListener("visibilitychange", () => {
   cancelAutoLock();
   AUTH_UNTIL = 0;
   if (DEK && away >= LOCK_GRACE_MS) lock();
-  maybeAutoFaceId();
+  gateAutoFaceId();
   checkForUpdate();
 });
 
@@ -1839,7 +1854,7 @@ window.addEventListener("online", () => scheduleSync());
   await loadMeta();
   VIEW = { name: "list", cardId: null };
   render();
-  maybeAutoFaceId(); // launching straight into the Face ID sheet, where allowed
+  gateAutoFaceId();  // announce a new build first, then offer Face ID
 
   if (CloudSync.isConfigured()) {
     CloudSync.onChange(() => {
@@ -1875,8 +1890,6 @@ window.addEventListener("online", () => scheduleSync());
       history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
     }
   } catch {}
-
-  checkVersion();               // first thing, before anything cached matters
 
   if ("serviceWorker" in navigator) {
     try {
