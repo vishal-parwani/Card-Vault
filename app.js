@@ -1648,7 +1648,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "28";
+const APP_VERSION = "29";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
