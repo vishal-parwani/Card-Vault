@@ -191,15 +191,28 @@ async function setupVault(password, enableFaceId) {
   if (enableFaceId) {
     const credId = await registerPasskey();
     const bytes = await getPrfBytes(credId);
-    META.prf = { credId, wrapped: await wrap(await prfKek(bytes), DEK) };
+    META.prf = { credId, device: deviceId(), wrapped: await wrap(await prfKek(bytes), DEK) };
   }
   CARDS = []; DELETED = [];
   await saveVault();
 }
+/* A stable per-device id, held outside the vault so it never syncs. Lets us
+   tell "this device's passkey" from one inherited via a restore — the latter
+   belongs to another device and will always fail here. */
+const DEVICE_KEY = "cardvault.deviceId";
+function deviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) { id = uid() + uid(); localStorage.setItem(DEVICE_KEY, id); }
+    return id;
+  } catch { return "no-storage"; }
+}
+function faceIdIsLocal() { return !!(META && META.prf && META.prf.device === deviceId()); }
+
 async function addFaceId() {
   const credId = await registerPasskey();
   const bytes = await getPrfBytes(credId);
-  META.prf = { credId, wrapped: await wrap(await prfKek(bytes), DEK) };
+  META.prf = { credId, device: deviceId(), wrapped: await wrap(await prfKek(bytes), DEK) };
   await idbSet("meta", META);
 }
 async function afterUnlock() {
@@ -702,6 +715,7 @@ async function commitImport() {
 const I = {
   lock: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.6"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
   lockSm: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
+  faceGold: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.8"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M9 15c1 1 5 1 6 0"/></svg>`,
   face: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1400" stroke-width="1.8"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M9 15c1 1 5 1 6 0"/></svg>`,
   copy: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
   copyGold: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.6"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
@@ -841,6 +855,12 @@ function section(title, list) {
     <div class="cards">${list.map(cardFaceSmall).join("")}</div></div>`;
 }
 
+const FACE_DISMISS_KEY = "cardvault.faceBannerDismissed";
+function showFaceBanner() {
+  if (!DEK || faceIdIsLocal() || !prfSupportedUA()) return false;
+  try { return localStorage.getItem(FACE_DISMISS_KEY) !== "1"; } catch { return true; }
+}
+
 function viewList() {
   const favs = CARDS.filter((c) => c.favourite);
   const prim = CARDS.filter((c) => !c.favourite && c.type !== "addon");
@@ -856,11 +876,22 @@ function viewList() {
         <button class="icon-btn" data-lock>${I.lockSm}</button>
       </div>
     </div>
+    ${showFaceBanner() ? `
+      <div class="banner">
+        <div class="banner-txt">
+          <div class="banner-t">${I.faceGold} Turn on Face ID</div>
+          <div class="banner-s">${META.prf ? "The Face ID set up on your other device can't unlock this one." : "Unlock without typing your master password."} Takes a second.</div>
+        </div>
+        <div class="banner-acts">
+          <button class="btn-primary" data-facesetup>Enable Face ID</button>
+          <button class="link" data-facedismiss>Not now</button>
+        </div>
+      </div>` : ""}
     <div class="scroll">${body}</div>
     <button class="add-tile" data-add><span class="plus">+</span> Add card</button>
     <div class="list-links">
       <button class="link" data-import>Import from LastPass</button>
-      ${prfSupportedUA() ? `<button class="link" data-facesetup>${META && META.prf ? "Re-enable" : "Enable"} Face ID here</button>` : ""}
+      ${prfSupportedUA() && !showFaceBanner() ? `<button class="link" data-facesetup>${faceIdIsLocal() ? "Re-enrol" : "Enable"} Face ID here</button>` : ""}
     </div>`;
 }
 
@@ -963,7 +994,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],[data-facesetup],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -1072,9 +1103,14 @@ document.addEventListener("click", async (e) => {
   if (t.hasAttribute("data-lock")) return lock();
   if (t.hasAttribute("data-add")) return go("add");
   if (t.hasAttribute("data-import")) return openImport();
+  if (t.hasAttribute("data-facedismiss")) {
+    try { localStorage.setItem(FACE_DISMISS_KEY, "1"); } catch {}
+    return render();
+  }
   if (t.hasAttribute("data-facesetup")) {
     try {
       await addFaceId();      // re-wraps this device's DEK with a local passkey
+      try { localStorage.removeItem(FACE_DISMISS_KEY); } catch {}
       scheduleSync();
       toast("Face ID enabled");
       render();

@@ -93,7 +93,8 @@
   /* ---------- transport ---------- */
   async function call(path, body) {
     const p = new URLSearchParams({ ckAPIToken: cfg().apiToken });
-    if (webAuth) p.set("ckWebAuthToken", webAuth);
+    const usedAuth = webAuth; // remember which credential this request carried
+    if (usedAuth) p.set("ckWebAuthToken", usedAuth);
     const url = `${apiBase()}/${path}?${p}`;
     DIAG.lastCall = path;
 
@@ -118,7 +119,9 @@
     // 421/401 mean "no valid credential". The body carries the sign-in URL.
     if (res.status === 421 || res.status === 401) {
       if (json && json.redirectURL) redirectURL = json.redirectURL;
-      clearAuth();
+      // Only drop the credential this request actually used. A slow request
+      // carrying an old token must not wipe one signed in since it was sent.
+      if (webAuth === usedAuth) clearAuth();
       const e = new Error("Sign in to iCloud to sync.");
       e.needsAuth = true;
       throw e;
