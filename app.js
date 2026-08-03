@@ -1082,8 +1082,11 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-revealnum],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-revealnum],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#update-reload,#update-dismiss");
   if (!t) return;
+
+  if (t.id === "update-reload") { t.disabled = true; t.textContent = "Reloading…"; return applyUpdate(); }
+  if (t.id === "update-dismiss") return showUpdateBar(false);
 
   /* ----- sync sheet ----- */
   if (t.hasAttribute("data-sync")) return openSync();
@@ -1416,6 +1419,52 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#sync-auth-wrap")) AUTH_UNTIL = Date.now() + 120000;
 });
 
+/* ---------- app updates ----------
+   The service worker installs a new build and waits rather than taking over, so
+   the page decides when to swap. Without that the app kept serving whatever it
+   had already loaded and looked unchanged until it was quit and relaunched
+   twice — the reason a deploy never seemed to arrive. */
+let SW_REG = null, lastUpdateCheck = 0;
+
+function showUpdateBar(on) {
+  const el = document.getElementById("update-bar");
+  if (!el) return;
+  // Reloading drops the in-memory DEK, but only say so when there is one.
+  const sub = el.querySelector(".update-s");
+  if (sub) sub.textContent = DEK ? "Reloading locks the vault." : "Reload to install it.";
+  el.hidden = !on;
+}
+
+function watchForUpdate(reg) {
+  SW_REG = reg;
+  // A build may already be waiting from an earlier launch.
+  if (reg.waiting && navigator.serviceWorker.controller) showUpdateBar(true);
+  reg.addEventListener("updatefound", () => {
+    const sw = reg.installing;
+    if (!sw) return;
+    sw.addEventListener("statechange", () => {
+      // No controller means this is a first install, not an update to announce.
+      if (sw.state === "installed" && navigator.serviceWorker.controller) showUpdateBar(true);
+    });
+  });
+}
+
+/* Checked on launch and on each return to the foreground, so a deploy is picked
+   up without quitting the app. Throttled: app switching is frequent. */
+function checkForUpdate() {
+  if (!SW_REG || Date.now() - lastUpdateCheck < 60000) return;
+  lastUpdateCheck = Date.now();
+  SW_REG.update().catch(() => {});
+}
+
+function applyUpdate() {
+  if (!SW_REG || !SW_REG.waiting) return location.reload();
+  // Reload only once the new worker is in charge, so the fresh files are the
+  // ones that load — reloading first would just re-run the old build.
+  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload(), { once: true });
+  SW_REG.waiting.postMessage({ type: "SKIP_WAITING" });
+}
+
 /* ---------- auto-lock ----------
    Locking the instant the app is backgrounded made every app switch — and every
    share sheet, notification tap or file picker — cost a full unlock. The DEK now
@@ -1481,6 +1530,7 @@ document.addEventListener("visibilitychange", () => {
   AUTH_UNTIL = 0;
   if (DEK && away >= LOCK_GRACE_MS) lock();
   maybeAutoFaceId();
+  checkForUpdate();
 });
 
 document.addEventListener("change", async (e) => {
@@ -1533,6 +1583,10 @@ window.addEventListener("online", () => scheduleSync());
   }
 
   if ("serviceWorker" in navigator) {
-    try { await navigator.serviceWorker.register("./service-worker.js"); } catch {}
+    try {
+      // register() checks for a new worker itself, so don't immediately re-ask.
+      lastUpdateCheck = Date.now();
+      watchForUpdate(await navigator.serviceWorker.register("./service-worker.js"));
+    } catch {}
   }
 })();

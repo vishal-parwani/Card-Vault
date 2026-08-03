@@ -20,6 +20,18 @@ A tiny offline, encrypted store for your card details — a self-hosted stand-in
 
 **Face ID fires on its own.** Returning to a locked vault triggers the Face ID prompt without waiting for a tap, and so does launching the app. This is best-effort: Safari can refuse WebAuthn to a page that hasn't been touched yet, and when it does the app falls back silently to the lock screen's *Unlock with Face ID* button. Nothing is retried in a loop — one attempt per return to the foreground.
 
+## Updates
+
+The app is cache-first, so a deploy doesn't appear just because you reopened the app. It used to take two full quit-and-relaunch cycles to land: the service worker called `skipWaiting()` and took over immediately, but the page on screen had already loaded the previous build's scripts, so the first relaunch swapped the cache and the second one finally showed the new code.
+
+Now a new build installs and **waits** instead. The page notices it, shows a *New version available* bar, and only promotes it when you tap **Reload** — which messages the waiting worker to `skipWaiting()`, then reloads once it has taken control, so the fresh files are the ones that load. Dismissing the bar leaves the build waiting; it activates on its own the next time the app is fully closed and reopened.
+
+The check runs at launch and on each return to the foreground (throttled to once a minute), so a deploy is normally picked up without quitting the app at all.
+
+Reloading drops the in-memory DEK, so the vault locks — the bar says so when there is something to lose.
+
+> Bumping `CACHE` in `service-worker.js` is what marks a build as new. Change it whenever you ship, or devices will keep serving the cached copy.
+
 ## Viewing card details
 
 The card number is masked on the main list, with an eye button beside the copy button to reveal it on that card alone; it re-masks when the list next re-renders.

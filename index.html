@@ -92,6 +92,17 @@
   </div>
 
   <input type="file" id="lp-file" accept=".csv,text/csv,text/plain" hidden />
+
+  <!-- Outside #app, like the sheets above: re-rendering #app must not drop it. -->
+  <div id="update-bar" hidden>
+    <div class="update-txt">
+      <div class="update-t">New version available</div>
+      <div class="update-s">Reloading locks the vault.</div>
+    </div>
+    <button class="btn-primary" id="update-reload">Reload</button>
+    <button class="icon-btn" id="update-dismiss" aria-label="Not now">&times;</button>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
   <script src="./sync-config.js"></script>
   <script src="./sync.js"></script>

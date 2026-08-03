@@ -141,6 +141,22 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 }
 .empty { color:var(--dim); font-size:14px; text-align:center; padding:40px 20px; }
 
+/* update prompt — sits under the privacy shield, over everything else */
+#update-bar {
+  position:fixed; z-index:150; left:12px; right:12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  max-width:456px; margin:0 auto;
+  background:var(--ink2); border:1px solid rgba(216,179,106,.35); border-radius:14px;
+  padding:12px 14px; display:flex; align-items:center; gap:12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+#update-bar[hidden] { display:none; }
+#update-bar .update-txt { flex:1; min-width:0; }
+#update-bar .update-t { font-size:14px; font-weight:600; }
+#update-bar .update-s { font-size:11px; color:var(--dim); margin-top:3px; }
+#update-bar .btn-primary { width:auto; flex-shrink:0; padding:10px 18px; font-size:14px; }
+#update-bar .icon-btn { flex-shrink:0; font-size:20px; color:var(--dim); }
+
 /* sync sheet */
 .hgroup { display:flex; gap:8px; }
 .sheet {

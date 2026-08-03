@@ -1,4 +1,4 @@
-const CACHE = "card-vault-v21";
+const CACHE = "card-vault-v22";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,8 +12,17 @@ const ASSETS = [
   "./icons/apple-touch-icon.png",
 ];
 
+/* No skipWaiting here on purpose. Taking over immediately swapped the cache out
+   from under a page still running the previous build — the app looked unchanged
+   until it was quit and relaunched twice, since the visible page had already
+   loaded the old scripts. A new build now installs and waits; the page notices,
+   offers a reload, and promotes it below only when the user accepts. */
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+});
+
+self.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {
