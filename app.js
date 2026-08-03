@@ -400,6 +400,47 @@ async function restoreFromCloud() {
   DEK = null; CARDS = []; DELETED = [];
 }
 
+/* Restore driven from the first screen. Signs in if needed (which navigates
+   away and comes back), pulls the vault, then tries the passkey that came with
+   it — so a device whose iCloud Keychain has the passkey never sees a password
+   prompt. Falls back to the password only when Face ID genuinely can't work. */
+const RESTORE_INTENT = "cardvault.restoreIntent";
+
+async function restoreFlow() {
+  const err = document.getElementById("w-err");
+  const say = (m) => { if (err) err.textContent = m; };
+  try {
+    say("");
+    await CloudSync.init();
+    if (!CloudSync.signedIn()) {
+      try { localStorage.setItem(RESTORE_INTENT, "1"); } catch {}
+      return CloudSync.signIn(); // leaves the page; boot picks it up on return
+    }
+    await restoreFromCloud();
+    await finishRestore();
+  } catch (ex) {
+    say((ex && ex.message) || "Couldn't restore from iCloud.");
+  }
+}
+
+/* After the vault lands, unlock with the inherited passkey if this device can.
+   Success also marks it local, so the lock screen offers Face ID from then on. */
+async function finishRestore() {
+  try { localStorage.removeItem(RESTORE_INTENT); } catch {}
+  if (META && META.prf && META.prf.credId) {
+    try {
+      await unlockWithFaceId();
+      META.prf.device = deviceId();
+      await idbSet("meta", META);
+      toast("Unlocked with Face ID");
+      return go("list");
+    } catch (e) {
+      console.warn("[CardVault] inherited passkey unusable here:", e);
+    }
+  }
+  render(); // lock screen; password, then the Face ID prompt once unlocked
+}
+
 /* Overwrite the iCloud copy with this device's vault. */
 async function overwriteCloud() {
   await CloudSync.init();
@@ -975,6 +1016,20 @@ function viewForm(editId) {
     <button class="btn-primary" data-save="${editId || ""}" style="margin-top:14px">${c ? "Save changes" : "Save card"}</button>`;
 }
 
+function viewWelcome() {
+  app().innerHTML = `
+    <div class="center">
+      <div class="lock-badge">${I.lock}</div>
+      <div><div class="title-lg">Card Vault</div><div class="sub">Your cards, encrypted on your device</div></div>
+      <div class="stack">
+        <button class="btn-primary" data-new>Create a new vault</button>
+        <button class="btn-ghost" data-restore>Restore from iCloud</button>
+        <div class="err" id="w-err"></div>
+        <div class="hint">Restoring brings your cards from another device and unlocks with Face ID if it is available here.</div>
+      </div>
+    </div>`;
+}
+
 function viewSetup() {
   app().innerHTML = `
     <div class="center">
@@ -986,7 +1041,7 @@ function viewSetup() {
         <div class="toggle on" data-t="face" id="s-face"><span>Enable Face ID unlock</span><div class="sw"><div class="knob"></div></div></div>
         <div class="err" id="s-err"></div>
         <button class="btn-primary" id="s-create">Create vault</button>
-        <button class="link" data-sync>Already have a vault? Restore from iCloud</button>
+        <button class="link" data-welcome>Back</button>
         <div class="hint">Your password is the only way to recover the vault if Face ID is ever removed. There is no reset — keep it safe.</div>
       </div>
     </div>`;
@@ -1014,7 +1069,7 @@ function viewLock() {
 
 function render() {
   if (VIEW.name === "boot") return;
-  if (!META) return viewSetup();
+  if (!META) return VIEW.name === "create" ? viewSetup() : viewWelcome();
   if (!DEK) return viewLock();
   if (VIEW.name === "detail") return viewDetail();
   if (VIEW.name === "add") return viewForm(null);
@@ -1024,7 +1079,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -1131,6 +1186,14 @@ document.addEventListener("click", async (e) => {
   }
 
   if (t.hasAttribute("data-lock")) return lock();
+  if (t.hasAttribute("data-new")) return go("create");
+  if (t.hasAttribute("data-welcome")) return go("welcome");
+  if (t.hasAttribute("data-restore")) {
+    t.disabled = true; t.textContent = "Restoring…";
+    await restoreFlow();
+    if (document.body.contains(t)) { t.disabled = false; t.textContent = "Restore from iCloud"; }
+    return;
+  }
   if (t.hasAttribute("data-add")) return go("add");
   if (t.hasAttribute("data-import")) return openImport();
   if (t.hasAttribute("data-facedismiss")) {
@@ -1374,13 +1437,14 @@ window.addEventListener("online", () => scheduleSync());
       async () => {
         // Signing in navigates away and back. If this device has no vault yet,
         // finish the restore rather than leaving the user at the setup screen.
-        if (!META && CloudSync.signedIn()) {
+        let wanted = false;
+        try { wanted = localStorage.getItem(RESTORE_INTENT) === "1"; } catch {}
+        if (!META && wanted && CloudSync.signedIn()) {
           try {
             await restoreFromCloud(); // nothing local to lose
-            toast("Restored from iCloud");
-            render();
+            await finishRestore();
             return;
-          } catch { /* no vault in iCloud yet — fall through to setup */ }
+          } catch { try { localStorage.removeItem(RESTORE_INTENT); } catch {} }
         }
         if (META) syncNow().catch(() => {});
       },
