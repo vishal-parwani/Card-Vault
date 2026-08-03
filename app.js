@@ -1652,7 +1652,48 @@ document.addEventListener("click", (e) => {
    the page decides when to swap. Without that the app kept serving whatever it
    had already loaded and looked unchanged until it was quit and relaunched
    twice — the reason a deploy never seemed to arrive. */
+/* The version this build was shipped as. version.json on the server holds the
+   version that is deployed. Comparing the two is the whole update check — it
+   does not depend on the browser noticing that service-worker.js changed, which
+   is exactly the step iOS was failing to do. */
+const APP_VERSION = "26";
+
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
+
+/* Fetched with no-store and a cache-busting query, so neither the HTTP cache
+   nor the service worker can answer with a stale number. */
+async function deployedVersion() {
+  const res = await fetch(`./version.json?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("version check failed");
+  return String((await res.json()).version || "");
+}
+
+async function checkVersion() {
+  if (!navigator.onLine) return;
+  try {
+    const latest = await deployedVersion();
+    if (latest && latest !== APP_VERSION) showUpdateBar(true);
+  } catch { /* offline or blocked — nothing to announce */ }
+}
+
+/* Belt and braces: drop every cache, unregister the worker, then reload on a
+   URL the browser has never seen. Anything short of this can still be answered
+   from something stale. */
+async function forceUpdate() {
+  if (SW_RELOADING) return;
+  SW_RELOADING = true;
+  try {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map((r) => r.unregister()));
+  } catch {}
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+  } catch {}
+  const u = new URL(location.href);
+  u.searchParams.set("v", Date.now().toString(36));
+  location.replace(u.toString());
+}
 
 function showUpdateBar(on) {
   const el = document.getElementById("update-bar");
@@ -1692,17 +1733,13 @@ function watchForUpdate(reg) {
 /* Checked on launch and on each return to the foreground, so a deploy is picked
    up without quitting the app. Throttled: app switching is frequent. */
 function checkForUpdate() {
-  if (!SW_REG || Date.now() - lastUpdateCheck < 60000) return;
+  if (Date.now() - lastUpdateCheck < 30000) return;
   lastUpdateCheck = Date.now();
-  SW_REG.update().catch(() => {});
+  checkVersion();
+  if (SW_REG) SW_REG.update().catch(() => {});
 }
 
-function applyUpdate() {
-  if (SW_RELOADING) return;
-  if (!SW_REG || !SW_REG.waiting) { SW_RELOADING = true; return location.reload(); }
-  // controllerchange (watched above) reloads once the new worker takes over.
-  SW_REG.waiting.postMessage({ type: "SKIP_WAITING" });
-}
+function applyUpdate() { return forceUpdate(); }
 
 /* ---------- auto-lock ----------
    Locking the instant the app is backgrounded made every app switch — and every
@@ -1820,6 +1857,17 @@ window.addEventListener("online", () => scheduleSync());
       () => setSync("error", "iCloud unavailable offline.")
     );
   }
+
+  // Drop the cache-buster forceUpdate() added, so it doesn't linger.
+  try {
+    const u = new URL(location.href);
+    if (u.searchParams.has("v")) {
+      u.searchParams.delete("v");
+      history.replaceState(null, "", u.pathname + (u.search || "") + u.hash);
+    }
+  } catch {}
+
+  checkVersion();               // first thing, before anything cached matters
 
   if ("serviceWorker" in navigator) {
     try {

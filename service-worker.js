@@ -1,4 +1,4 @@
-const CACHE = "card-vault-v25";
+const CACHE = "card-vault-v26";
 const ASSETS = [
   "./",
   "./index.html",
@@ -19,7 +19,11 @@ const ASSETS = [
    build permanently. Activating immediately means the worst case is seeing the
    new version one launch later; the update bar below just makes that instant. */
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // {cache:"reload"} so install pulls from the network rather than reusing
+  // whatever the HTTP cache happens to be holding.
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener("message", (e) => {
@@ -37,6 +41,10 @@ self.addEventListener("activate", (e) => {
 // credentials takes effect without also bumping the cache version.
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
+  // version.json must always come from the network: it is how the app learns a
+  // new build exists, so a cached answer would defeat the entire check.
+  if (url.pathname.endsWith("/version.json")) return;
+
   if (url.origin === location.origin && url.pathname.endsWith("/sync-config.js")) {
     e.respondWith(
       fetch(e.request).then((res) => {
