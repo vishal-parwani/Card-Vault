@@ -858,7 +858,10 @@ function viewList() {
     </div>
     <div class="scroll">${body}</div>
     <button class="add-tile" data-add><span class="plus">+</span> Add card</button>
-    <button class="link" data-import style="margin-top:12px">Import from LastPass</button>`;
+    <div class="list-links">
+      <button class="link" data-import>Import from LastPass</button>
+      ${prfSupportedUA() ? `<button class="link" data-facesetup>${META && META.prf ? "Re-enable" : "Enable"} Face ID here</button>` : ""}
+    </div>`;
 }
 
 function viewDetail() {
@@ -960,7 +963,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],[data-facesetup],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -1069,6 +1072,17 @@ document.addEventListener("click", async (e) => {
   if (t.hasAttribute("data-lock")) return lock();
   if (t.hasAttribute("data-add")) return go("add");
   if (t.hasAttribute("data-import")) return openImport();
+  if (t.hasAttribute("data-facesetup")) {
+    try {
+      await addFaceId();      // re-wraps this device's DEK with a local passkey
+      scheduleSync();
+      toast("Face ID enabled");
+      render();
+    } catch (ex) {
+      alert("Couldn't set up Face ID on this device.\n\n" + ((ex && ex.message) || ex));
+    }
+    return;
+  }
   if (t.id === "import-close") return closeImport();
   if (t.id === "import-file-btn") return document.getElementById("lp-file").click();
   if (t.dataset.editrow !== undefined) {
@@ -1176,7 +1190,15 @@ document.addEventListener("click", async (e) => {
   if (t.id === "u-face") {
     const err = document.getElementById("u-err");
     try { await unlockWithFaceId(); go("list"); }
-    catch (ex) { err.textContent = ex.message || "Face ID failed. Try your password."; }
+    catch (ex) {
+      // Browsers report this as an opaque DOMException. The actionable cause is
+      // almost always that the passkey belongs to a different device.
+      console.error("[CardVault] Face ID unlock failed:", ex);
+      err.textContent = "Face ID isn't set up on this device. Unlock with your master password, then tap “Enable Face ID here”.";
+      document.getElementById("pw-wrap").style.display = "block";
+      const use = document.getElementById("u-usepw");
+      if (use) use.style.display = "none";
+    }
     return;
   }
   if (t.id === "u-usepw") { document.getElementById("pw-wrap").style.display = "block"; t.style.display = "none"; return; }
@@ -1283,7 +1305,19 @@ window.addEventListener("online", () => scheduleSync());
       else if (!CloudSync.signedIn()) setSync("signedout");
     });
     CloudSync.init().then(
-      () => { if (META) syncNow().catch(() => {}); },
+      async () => {
+        // Signing in navigates away and back. If this device has no vault yet,
+        // finish the restore rather than leaving the user at the setup screen.
+        if (!META && CloudSync.signedIn()) {
+          try {
+            await restoreFromCloud(); // nothing local to lose
+            toast("Restored from iCloud");
+            render();
+            return;
+          } catch { /* no vault in iCloud yet — fall through to setup */ }
+        }
+        if (META) syncNow().catch(() => {});
+      },
       () => setSync("error", "iCloud unavailable offline.")
     );
   }
