@@ -177,7 +177,7 @@ async function saveVault() {
   await persistLocal();
   scheduleSync();
 }
-function lock() { DEK = null; CARDS = []; DELETED = []; render(); }
+function lock() { cancelAutoLock(); DEK = null; CARDS = []; DELETED = []; render(); }
 
 /* ---------- setup / unlock ---------- */
 async function setupVault(password, enableFaceId) {
@@ -903,8 +903,11 @@ function cardFaceSmall(c) {
       <button class="star-btn" data-fav="${c.id}">${I.star(c.favourite)}</button>
     </div>
     <div class="numrow">
-      <span class="num" style="color:${c.accent || "#fff"}">${maskNum(c.number)}</span>
-      <button class="oncard-btn" data-copy="number" data-id="${c.id}">${I.copy}</button>
+      <span class="num" style="color:${c.accent || "#fff"}" data-listnum="${c.id}">${maskNum(c.number)}</span>
+      <div class="numacts">
+        <button class="oncard-btn" data-revealnum="${c.id}">${I.eye(false)}</button>
+        <button class="oncard-btn" data-copy="number" data-id="${c.id}">${I.copy}</button>
+      </div>
     </div>
     <div class="metarow">
       <div class="field"><span class="k">EXP</span><span class="v">${esc(c.expiry)}</span>
@@ -972,16 +975,16 @@ function viewDetail() {
     <div class="card big" style="background:${gradientFor(c.network)}">
       <div class="sheen"></div>
       <div class="top"><div><div class="label">${esc(c.label)}</div><div class="network">${esc(c.network)}</div></div><div class="chip"></div></div>
-      <div class="num big" style="color:${c.accent || "#fff"}" data-num>${maskNum(c.number)}</div>
+      <div class="num big" style="color:${c.accent || "#fff"}" data-num>${esc(c.number)}</div>
       <div class="bottom"><div class="v">${esc(c.name)}</div><div class="v">${esc(c.expiry)}</div></div>
     </div>
     <div class="rows">
-      <div class="row"><div><div class="k">Card number</div><div class="v" data-fnum>${maskNum(c.number)}</div></div>
-        <div class="acts"><button class="icon-btn" data-toggle="num">${I.eyeD(false)}</button><button class="icon-btn" data-copy="number" data-id="${c.id}">${I.copyGold}</button></div></div>
+      <div class="row"><div><div class="k">Card number</div><div class="v" data-fnum>${esc(c.number)}</div></div>
+        <div class="acts"><button class="icon-btn" data-toggle="num">${I.eyeD(true)}</button><button class="icon-btn" data-copy="number" data-id="${c.id}">${I.copyGold}</button></div></div>
       <div class="row"><div><div class="k">Expiry</div><div class="v">${esc(c.expiry)}</div></div>
         <div class="acts"><button class="icon-btn" data-copy="expiry" data-id="${c.id}">${I.copyGold}</button></div></div>
-      <div class="row"><div><div class="k">CVV</div><div class="v" data-fcvv>•••</div></div>
-        <div class="acts"><button class="icon-btn" data-toggle="cvv">${I.eyeD(false)}</button><button class="icon-btn" data-copy="cvv" data-id="${c.id}">${I.copyGold}</button></div></div>
+      <div class="row"><div><div class="k">CVV</div><div class="v" data-fcvv>${esc(c.cvv)}</div></div>
+        <div class="acts"><button class="icon-btn" data-toggle="cvv">${I.eyeD(true)}</button><button class="icon-btn" data-copy="cvv" data-id="${c.id}">${I.copyGold}</button></div></div>
       <div class="row"><div><div class="k">Cardholder</div><div class="v">${esc(c.name)}</div></div></div>
       ${c.notes ? `<div class="row"><div><div class="k">Notes</div><div class="v notes">${esc(c.notes)}</div></div></div>` : ""}
       <div class="row" style="border:none"><button class="link" data-edit="${c.id}">Edit</button>
@@ -1079,7 +1082,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-revealnum],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -1158,7 +1161,7 @@ document.addEventListener("click", async (e) => {
   }
 
   // list: open card
-  if (t.dataset.open && !e.target.closest("[data-fav],[data-copy],[data-revealcvv]")) return go("detail", t.dataset.open);
+  if (t.dataset.open && !e.target.closest("[data-fav],[data-copy],[data-revealcvv],[data-revealnum]")) return go("detail", t.dataset.open);
 
   // favourite toggle
   if (t.dataset.fav) {
@@ -1173,6 +1176,19 @@ document.addEventListener("click", async (e) => {
     const map = { number: c.number, expiry: c.expiry, cvv: c.cvv };
     const labels = { number: "Number", expiry: "Expiry", cvv: "CVV" };
     return copy(map[t.dataset.copy], labels[t.dataset.copy]);
+  }
+
+  // reveal number on list card. State lives on the span, not in the text: a
+  // number short enough that maskNum leaves it alone would otherwise read as
+  // "already revealed" and the toggle would do nothing.
+  if (t.dataset.revealnum) {
+    const c = CARDS.find((x) => x.id === t.dataset.revealnum);
+    const span = document.querySelector(`[data-listnum="${c.id}"]`);
+    const shown = span.dataset.shown === "1";
+    span.dataset.shown = shown ? "" : "1";
+    span.textContent = shown ? maskNum(c.number) : c.number;
+    t.innerHTML = I.eye(!shown);
+    return;
   }
 
   // reveal cvv on list card
@@ -1317,7 +1333,9 @@ document.addEventListener("click", async (e) => {
 
   // unlock: face id
   if (t.id === "u-face") {
+    if (FACE_BUSY) return; // an automatic prompt is already up
     const err = document.getElementById("u-err");
+    FACE_BUSY = true;
     try { await unlockWithFaceId(); go("list"); }
     catch (ex) {
       // Browsers report this as an opaque DOMException. The actionable cause is
@@ -1327,7 +1345,7 @@ document.addEventListener("click", async (e) => {
       document.getElementById("pw-wrap").style.display = "block";
       const use = document.getElementById("u-usepw");
       if (use) use.style.display = "none";
-    }
+    } finally { FACE_BUSY = false; }
     return;
   }
   if (t.id === "u-usepw") { document.getElementById("pw-wrap").style.display = "block"; t.style.display = "none"; return; }
@@ -1398,10 +1416,71 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#sync-auth-wrap")) AUTH_UNTIL = Date.now() + 120000;
 });
 
-/* auto-lock when app is hidden/backgrounded */
+/* ---------- auto-lock ----------
+   Locking the instant the app is backgrounded made every app switch — and every
+   share sheet, notification tap or file picker — cost a full unlock. The DEK now
+   survives a short absence instead, and is dropped once that runs out. */
+const LOCK_GRACE_MS = 15000;
+let hiddenAt = 0, lockTimer = null;
+
+function cancelAutoLock() {
+  if (lockTimer) { clearTimeout(lockTimer); lockTimer = null; }
+  hiddenAt = 0;
+}
+
+function startAutoLock() {
+  cancelAutoLock();
+  hiddenAt = Date.now();
+  /* Backgrounded timers are throttled, and suspended outright once iOS freezes
+     the tab, so this only fires in the lucky case. The elapsed-time check on
+     the way back is what actually guarantees the grace period is honoured. */
+  lockTimer = setTimeout(() => {
+    lockTimer = null;
+    if (DEK && document.hidden) lock();
+  }, LOCK_GRACE_MS);
+}
+
+/* Card details are still in the DOM during the grace period, and iOS snapshots
+   the screen for the app switcher on the way out. Cover it. */
+function privacyShield(on) {
+  let el = document.getElementById("privacy-shield");
+  if (!on) { if (el) el.hidden = true; return; }
+  if (!DEK) return; // nothing on screen worth hiding
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "privacy-shield";
+    el.innerHTML = `<div class="lock-badge">${I.lock}</div>`;
+    document.body.appendChild(el);
+  }
+  el.hidden = false;
+}
+
+/* Coming back to a locked vault should present Face ID on its own, rather than
+   asking for a tap first. Safari may refuse WebAuthn without a user gesture, so
+   this is best-effort: on refusal the lock screen's button is still there. */
+let FACE_BUSY = false;
+async function maybeAutoFaceId() {
+  if (FACE_BUSY || DEK || !META || document.hidden || SHEET_OPEN) return;
+  if (!faceIdIsLocal()) return;
+  FACE_BUSY = true;
+  try { await unlockWithFaceId(); go("list"); }
+  catch (ex) { console.warn("[CardVault] automatic Face ID prompt unavailable:", ex); }
+  finally { FACE_BUSY = false; }
+}
+
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) { AUTH_UNTIL = 0; return; }
-  if (DEK && Date.now() > AUTH_UNTIL) lock();
+  if (document.hidden) {
+    privacyShield(true);
+    // A sign-in hand-off holds its own grace; don't start a second clock.
+    if (DEK && Date.now() > AUTH_UNTIL) startAutoLock();
+    return;
+  }
+  privacyShield(false);
+  const away = hiddenAt ? Date.now() - hiddenAt : 0;
+  cancelAutoLock();
+  AUTH_UNTIL = 0;
+  if (DEK && away >= LOCK_GRACE_MS) lock();
+  maybeAutoFaceId();
 });
 
 document.addEventListener("change", async (e) => {
@@ -1425,6 +1504,7 @@ window.addEventListener("online", () => scheduleSync());
   await loadMeta();
   VIEW = { name: "list", cardId: null };
   render();
+  maybeAutoFaceId(); // launching straight into the Face ID sheet, where allowed
 
   if (CloudSync.isConfigured()) {
     CloudSync.onChange(() => {

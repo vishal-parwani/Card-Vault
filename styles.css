@@ -54,6 +54,14 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
   border:1px solid var(--line); display:flex; align-items:center; justify-content:center;
   box-shadow: 0 0 0 6px rgba(216,179,106,.05);
 }
+/* Covers the screen while the app is backgrounded but not yet locked, so the
+   iOS app-switcher snapshot never carries card details. */
+#privacy-shield {
+  position:fixed; inset:0; z-index:200; background:var(--ink);
+  display:flex; align-items:center; justify-content:center;
+}
+#privacy-shield[hidden] { display:none; }
+
 .title-lg { font-weight:700; font-size:22px; letter-spacing:-.3px; }
 .sub { font-size:13px; color:var(--dim); margin-top:6px; }
 .stack { width:100%; max-width:320px; display:flex; flex-direction:column; gap:12px; }
@@ -86,6 +94,7 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 .oncard-btn { width:24px; height:24px; border-radius:7px; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; flex-shrink:0; backdrop-filter: blur(4px); }
 .star-btn { width:28px; height:28px; border-radius:8px; background:rgba(0,0,0,.28); display:flex; align-items:center; justify-content:center; backdrop-filter: blur(4px); }
 .card .numrow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.card .numacts { display:flex; align-items:center; gap:6px; flex-shrink:0; }
 .card .num { font-family:var(--mono); font-size:15px; letter-spacing:1.5px; }
 .card .num.big { font-size:17px; letter-spacing:2px; }
 .card .metarow { display:flex; align-items:center; gap:14px; }

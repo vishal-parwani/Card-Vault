@@ -7,10 +7,24 @@ A tiny offline, encrypted store for your card details — a self-hosted stand-in
 - The DEK is wrapped twice so either method can unlock the same vault:
   - **Master password** → PBKDF2 (310k iterations, SHA-256) → AES-GCM key.
   - **Face ID** → WebAuthn **PRF** output → HKDF → AES-GCM key.
-- The DEK exists **only in memory** after unlock and is dropped when the app is backgrounded or locked.
+- The DEK exists **only in memory** after unlock, and is dropped on lock or after the app has been backgrounded for 15 seconds (see *Unlocking and auto-lock*).
 - Storage is your browser's IndexedDB. There is **no server** — iCloud sync, if you turn it on, goes straight from your device to your own private CloudKit database.
 
 > There is no password reset. If the passkey is removed *and* the password is lost, the vault is unrecoverable — by design.
+
+## Unlocking and auto-lock
+
+**Auto-lock waits 15 seconds.** Locking the moment the app lost focus meant every app switch — and every share sheet, notification tap or file picker — cost a full unlock. The vault now survives 15 seconds of being backgrounded and locks after that. Because iOS freezes a backgrounded tab's timers, the countdown can't be trusted to fire on its own; the elapsed time is re-checked when you come back, so the grace period holds regardless of whether the timer ran.
+
+**The screen is covered while you're away.** The DEK now outlives being backgrounded, so card details are still on screen when iOS takes its app-switcher snapshot. A shield is drawn over the app on the way out and removed on the way back, keeping the snapshot blank.
+
+**Face ID fires on its own.** Returning to a locked vault triggers the Face ID prompt without waiting for a tap, and so does launching the app. This is best-effort: Safari can refuse WebAuthn to a page that hasn't been touched yet, and when it does the app falls back silently to the lock screen's *Unlock with Face ID* button. Nothing is retried in a loop — one attempt per return to the foreground.
+
+## Viewing card details
+
+The card number is masked on the main list, with an eye button beside the copy button to reveal it on that card alone; it re-masks when the list next re-renders.
+
+Opening a card shows **everything unmasked** — number and CVV included — since that screen is the point of tapping through. The eye buttons still work, in reverse: they hide a value you don't want on screen.
 
 ## iCloud sync (optional)
 
