@@ -194,3 +194,27 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 .pick-row .pick-sub { display:block; font-size:11px; color:var(--dim); margin-top:3px; }
 .pick-row.off .pick-main { color:var(--dim); }
 .pick-warn { color:#E0A96B; }
+.pick-item { display:flex; flex-direction:column; }
+.pick-row .pick-body { flex:1; min-width:0; }
+.pick-edit {
+  flex-shrink:0; font-size:12px; color:var(--gold); padding:6px 10px;
+  border:1px solid var(--line); border-radius:9px;
+}
+.pick-form {
+  display:flex; flex-direction:column; gap:9px; padding:12px;
+  border:1px solid var(--line); border-top:none; border-radius:0 0 11px 11px;
+  background:rgba(0,0,0,.2);
+}
+.pick-form[hidden] { display:none; }
+.pick-form label { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:.6px; display:flex; flex-direction:column; gap:5px; }
+.pick-form input, .pick-form select, .pick-form textarea {
+  width:100%; background:var(--ink2); border:1px solid var(--line); border-radius:10px;
+  padding:9px 11px; color:var(--txt); font-family:var(--sans); font-size:14px;
+  outline:none; text-transform:none; letter-spacing:normal;
+}
+.pick-form .mono { font-family:var(--mono); }
+.pick-form input:focus, .pick-form select:focus, .pick-form textarea:focus { border-color:var(--gold); }
+.pick-split { display:flex; gap:9px; }
+.pick-split > label { flex:1; }
+.pick-check { flex-direction:row !important; align-items:center; gap:9px !important; font-size:13px !important; text-transform:none !important; letter-spacing:normal !important; color:var(--txt) !important; }
+.pick-check input { width:20px !important; height:20px; accent-color:var(--gold); flex-shrink:0; }

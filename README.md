@@ -50,7 +50,11 @@ Export is available on LastPass Free, but only from the **web vault on a compute
 
 In Card Vault, tap **Import from LastPass** under the Add card button. LastPass either downloads a `.csv` or prints the export as text in the browser, so the sheet takes both: pick the file, or paste the text straight in.
 
-Only payment cards are imported — logins and secure notes in the same export are ignored. Number, cardholder, CVV, expiry, per-card notes and the favourite flag all come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
+Nothing imports blind: the export is parsed and every card it found is listed for you to review. Tick the ones to keep, skip the rest, and hit **Edit** on any row to correct it — label, network, number, expiry, CVV, cardholder, notes and the add-on flag — before it reaches the vault.
+
+Cards that look inactive start **unticked**, with the reason shown: expired ones (from the expiry date, valid through the end of that month), and ones whose name or notes say closed, cancelled, deactivated and similar. LastPass has no active/closed flag, so this is inference — tick anything it got wrong, and fixing an expiry in the edit panel clears the warning immediately.
+
+Only payment cards are imported — logins and secure notes in the same export are ignored. Detection doesn't rely on one exact note-type string, since LastPass files these under "Payment Cards" and has labelled them differently across versions: other spellings are accepted, and any entry carrying both a card number and a security code counts as a card. Number, cardholder, CVV, expiry, per-card notes and the favourite flag all come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
 
 **Add-on cards** are guessed, because LastPass has no field for them. A card whose name or notes mention "add-on", "supplementary" or similar is filed under Add-on cards; everything else lands under Your cards. It's a guess, so check the sections after importing — the toggle on the edit screen fixes any that landed wrong.
 

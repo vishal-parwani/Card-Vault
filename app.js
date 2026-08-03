@@ -418,9 +418,14 @@ function detectNetwork(num) {
 
 /* ---------- helpers ---------- */
 function maskNum(num) {
-  const p = (num || "").trim().split(/\s+/);
-  if (p.length < 2) return num;
-  return p.map((x, i) => (i === p.length - 1 ? x : "••••")).join(" ");
+  const s = String(num || "").trim();
+  if (!s) return s;
+  const p = s.split(/\s+/);
+  // Grouped numbers keep their shape, showing only the last group.
+  if (p.length > 1) return p.map((x, i) => (i === p.length - 1 ? x : "••••")).join(" ");
+  // Imported numbers arrive unspaced, and must still be masked.
+  const digits = s.replace(/\D/g, "");
+  return digits.length > 4 ? "•••• " + digits.slice(-4) : s;
 }
 function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -607,16 +612,55 @@ async function importLastPassText(text) {
   showImportPicker(skipped);
 }
 
-function showImportPicker(skipped) {
-  const list = document.getElementById("import-list");
-  list.innerHTML = PENDING_IMPORT.map((c, i) => `
-    <label class="pick-row${c.reason ? " off" : ""}">
-      <input type="checkbox" data-pick="${i}" ${c.reason ? "" : "checked"} />
-      <span>
-        <span class="pick-main">${esc(c.label)}</span>
-        <span class="pick-sub">${esc(c.network)} · ${esc(maskNum(c.number))}${c.expiry ? " · " + esc(c.expiry) : ""}${c.reason ? ` · <span class="pick-warn">${esc(c.reason)}</span>` : ""}</span>
+// The summary line for one row, recomputed whenever its fields are edited.
+function pickSummary(c) {
+  return `${esc(c.network)} · ${esc(maskNum(c.number))}${c.expiry ? " · " + esc(c.expiry) : ""}` +
+         `${c.type === "addon" ? " · add-on" : ""}` +
+         `${c.reason ? ` · <span class="pick-warn">${esc(c.reason)}</span>` : ""}`;
+}
+
+function pickRowHTML(c, i) {
+  const netOpts = NETWORKS.map((n) => `<option ${c.network === n ? "selected" : ""}>${n}</option>`).join("");
+  return `
+  <div class="pick-item" data-item="${i}">
+    <div class="pick-row${c.reason ? " off" : ""}">
+      <input type="checkbox" data-pick="${i}" ${c.reason ? "" : "checked"} aria-label="Import this card" />
+      <span class="pick-body">
+        <span class="pick-main" data-main="${i}">${esc(c.label)}</span>
+        <span class="pick-sub" data-sub="${i}">${pickSummary(c)}</span>
       </span>
-    </label>`).join("");
+      <button class="pick-edit" data-editrow="${i}">Edit</button>
+    </div>
+    <div class="pick-form" data-form="${i}" hidden>
+      <label>Label<input data-f="label" data-i="${i}" value="${esc(c.label)}" /></label>
+      <label>Network<select data-f="network" data-i="${i}">${netOpts}</select></label>
+      <label>Card number<input class="mono" data-f="number" data-i="${i}" inputmode="numeric" value="${esc(c.number)}" /></label>
+      <div class="pick-split">
+        <label>Expiry<input class="mono" data-f="expiry" data-i="${i}" value="${esc(c.expiry)}" placeholder="MM/YY" /></label>
+        <label>CVV<input class="mono" data-f="cvv" data-i="${i}" inputmode="numeric" value="${esc(c.cvv)}" /></label>
+      </div>
+      <label>Cardholder<input data-f="name" data-i="${i}" value="${esc(c.name)}" /></label>
+      <label>Notes<textarea rows="2" data-f="notes" data-i="${i}">${esc(c.notes || "")}</textarea></label>
+      <label class="pick-check"><input type="checkbox" data-f="addon" data-i="${i}" ${c.type === "addon" ? "checked" : ""} /> Add-on card</label>
+    </div>
+  </div>`;
+}
+
+// Re-render just the summary of row i after an edit, including its reason.
+function refreshPickRow(i) {
+  const c = PENDING_IMPORT[i];
+  c.reason = importReason(c);
+  const main = document.querySelector(`[data-main="${i}"]`);
+  const sub = document.querySelector(`[data-sub="${i}"]`);
+  const row = document.querySelector(`[data-item="${i}"] .pick-row`);
+  if (main) main.textContent = c.label;
+  if (sub) sub.innerHTML = pickSummary(c);
+  if (row) row.classList.toggle("off", !!c.reason);
+}
+
+function showImportPicker(skipped) {
+  document.getElementById("import-list").innerHTML =
+    PENDING_IMPORT.map((c, i) => pickRowHTML(c, i)).join("");
 
   const inactive = PENDING_IMPORT.filter((c) => c.reason).length;
   document.getElementById("import-summary").textContent =
@@ -916,7 +960,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -1027,6 +1071,12 @@ document.addEventListener("click", async (e) => {
   if (t.hasAttribute("data-import")) return openImport();
   if (t.id === "import-close") return closeImport();
   if (t.id === "import-file-btn") return document.getElementById("lp-file").click();
+  if (t.dataset.editrow !== undefined) {
+    const form = document.querySelector(`[data-form="${t.dataset.editrow}"]`);
+    form.hidden = !form.hidden;
+    t.textContent = form.hidden ? "Edit" : "Done";
+    return;
+  }
   if (t.id === "import-commit") return commitImport();
   if (t.id === "import-back") {
     PENDING_IMPORT = [];
@@ -1162,10 +1212,25 @@ document.addEventListener("input", (e) => {
   const cvv = document.getElementById("f-cvv");
   if (cvv && !cvv.value) setTimeout(() => { if (!cvv.value) cvv.focus(); }, 300);
 });
+function applyPickEdit(el) {
+  const i = Number(el.dataset.i);
+  const c = PENDING_IMPORT[i];
+  if (!c) return;
+  const f = el.dataset.f;
+  if (f === "addon") c.type = el.checked ? "addon" : "primary";
+  else c[f] = el.value;
+  c.updatedAt = Date.now();
+  refreshPickRow(i);
+}
+
 document.addEventListener("change", (e) => {
   if (!e.target) return;
   if (e.target.id === "f-network") e.target.dataset.touched = "1";
   if (e.target.matches("#import-list input[data-pick]")) updateImportCount();
+  if (e.target.matches("[data-f][data-i]")) applyPickEdit(e.target);
+});
+document.addEventListener("input", (e) => {
+  if (e.target && e.target.matches("[data-f][data-i]")) applyPickEdit(e.target);
 });
 
 // submit password on Enter
