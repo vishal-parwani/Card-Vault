@@ -69,12 +69,25 @@
         <div class="title-lg">Import from LastPass</div>
         <button class="icon-btn" id="import-close" aria-label="Close">&times;</button>
       </div>
-      <div class="hint">In the LastPass <strong>web vault on a computer</strong> (not the phone app): sidebar &rarr; Advanced&nbsp;Options &rarr; Export &rarr; LastPass CSV File.</div>
-      <button class="btn-ghost" id="import-file-btn">Choose CSV file</button>
-      <div class="hint">If LastPass showed the export as text on screen instead of downloading a file, select all of it and paste it here:</div>
-      <textarea id="import-text" rows="6" placeholder="url,username,password,totp,extra,name,grouping,fav&#10;..."></textarea>
-      <button class="btn-ghost" id="import-paste-go">Import pasted text</button>
-      <div class="hint">Only payment cards are read. Nothing is uploaded &mdash; the text is parsed on this device.</div>
+      <div id="import-choose">
+        <div class="hint">In the LastPass <strong>web vault on a computer</strong> (not the phone app): sidebar &rarr; Advanced&nbsp;Options &rarr; Export &rarr; LastPass CSV File.</div>
+        <button class="btn-ghost" id="import-file-btn" style="margin-top:14px">Choose CSV file</button>
+        <div class="hint" style="margin-top:14px">If LastPass showed the export as text on screen instead of downloading a file, select all of it and paste it here:</div>
+        <textarea id="import-text" rows="6" placeholder="url,username,password,totp,extra,name,grouping,fav&#10;..." style="margin-top:8px"></textarea>
+        <button class="btn-ghost" id="import-paste-go" style="margin-top:8px">Read export</button>
+        <div class="hint" style="margin-top:10px">Only payment cards are read &mdash; logins and notes are ignored. Nothing is uploaded; the text is parsed on this device.</div>
+      </div>
+
+      <div id="import-pick" hidden>
+        <div class="hint" id="import-summary"></div>
+        <div class="pick-actions">
+          <button class="link" id="import-all">Select all</button>
+          <button class="link" id="import-none">Select none</button>
+        </div>
+        <div id="import-list"></div>
+        <button class="btn-primary" id="import-commit" style="margin-top:14px">Import</button>
+        <button class="link" id="import-back" style="margin-top:10px">Back</button>
+      </div>
     </div>
   </div>
 

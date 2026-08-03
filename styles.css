@@ -180,3 +180,17 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
   outline:none; resize:vertical;
 }
 #import-text:focus { border-color: var(--gold); }
+/* import picker */
+.pick-actions { display:flex; gap:16px; margin:12px 0 8px; }
+#import-list { max-height:46dvh; overflow-y:auto; display:flex; flex-direction:column; gap:2px; }
+.pick-row {
+  display:flex; align-items:center; gap:12px; padding:11px 12px;
+  border:1px solid var(--line); border-radius:11px; background:var(--ink2);
+}
+.pick-row input[type="checkbox"] {
+  width:20px; height:20px; flex-shrink:0; accent-color:var(--gold); margin:0; padding:0;
+}
+.pick-row .pick-main { display:block; font-size:14px; font-weight:500; }
+.pick-row .pick-sub { display:block; font-size:11px; color:var(--dim); margin-top:3px; }
+.pick-row.off .pick-main { color:var(--dim); }
+.pick-warn { color:#E0A96B; }

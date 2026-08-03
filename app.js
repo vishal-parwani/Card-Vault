@@ -502,6 +502,17 @@ function lpFields(extra) {
   return out;
 }
 
+/* LastPass files these under "Payment Cards" in its UI, but exports them as
+   secure notes. The note type has been spelled a few ways across versions, so
+   rather than rely on one label, also accept any entry carrying both a card
+   number and a security code — a shape nothing else in the export has. */
+function looksLikeCard(extra) {
+  const s = String(extra || "");
+  if (/notetype\s*:\s*(credit\s*card|payment\s*cards?|bank\s*card)/i.test(s)) return true;
+  return /(^|\n)\s*Number\s*:\s*[0-9 -]{8,}/i.test(s) &&
+         /(^|\n)\s*Security Code\s*:/i.test(s);
+}
+
 /* LastPass has no notion of an add-on/supplementary card, so it can only be
    guessed from what the user wrote. A guess is safe here: it only preselects a
    toggle that is one tap to correct. */
@@ -526,7 +537,7 @@ function parseLastPass(text, existing) {
 
   for (let r = 1; r < rows.length; r++) {
     const extra = rows[r][iExtra] || "";
-    if (!/notetype\s*:\s*credit card/i.test(extra)) continue;
+    if (!looksLikeCard(extra)) continue;
     total++;
     const { head, notes } = lpSplit(extra);
     const f = lpFields(head);
@@ -554,6 +565,30 @@ function parseLastPass(text, existing) {
   return { cards, skipped, total };
 }
 
+/* A card is valid through the end of its expiry month. Unparseable or missing
+   expiry counts as active — better to offer it than to hide it. */
+function cardExpired(expiry, now = new Date()) {
+  const m = String(expiry || "").match(/^(\d{1,2})\s*\/\s*(\d{2}|\d{4})$/);
+  if (!m) return false;
+  const mm = parseInt(m[1], 10);
+  if (mm < 1 || mm > 12) return false;
+  const yy = m[2].length === 2 ? 2000 + parseInt(m[2], 10) : parseInt(m[2], 10);
+  return now >= new Date(yy, mm, 1); // first day of the month after expiry
+}
+
+/* Why a card shouldn't be imported by default — "" means it's fine. LastPass
+   has no active/closed flag, so this reads the expiry and any wording the user
+   left behind. It only unticks a box, so a wrong call costs one tap. */
+function importReason(c, now = new Date()) {
+  if (cardExpired(c.expiry, now)) return "expired " + c.expiry;
+  if (/\b(closed|cancell?ed|deactivated|inactive|blocked|surrendered|replaced)\b/i.test(`${c.label} ${c.notes || ""}`)) {
+    return "looks closed";
+  }
+  return "";
+}
+
+let PENDING_IMPORT = [];
+
 async function importLastPassFile(file) {
   return importLastPassText(await file.text());
 }
@@ -568,12 +603,55 @@ async function importLastPassText(text) {
     toast(`Already have all ${skipped} card${skipped === 1 ? "" : "s"}`);
     return;
   }
-  CARDS = CARDS.concat(cards);
+  PENDING_IMPORT = cards.map((c) => ({ ...c, reason: importReason(c) }));
+  showImportPicker(skipped);
+}
+
+function showImportPicker(skipped) {
+  const list = document.getElementById("import-list");
+  list.innerHTML = PENDING_IMPORT.map((c, i) => `
+    <label class="pick-row${c.reason ? " off" : ""}">
+      <input type="checkbox" data-pick="${i}" ${c.reason ? "" : "checked"} />
+      <span>
+        <span class="pick-main">${esc(c.label)}</span>
+        <span class="pick-sub">${esc(c.network)} · ${esc(maskNum(c.number))}${c.expiry ? " · " + esc(c.expiry) : ""}${c.reason ? ` · <span class="pick-warn">${esc(c.reason)}</span>` : ""}</span>
+      </span>
+    </label>`).join("");
+
+  const inactive = PENDING_IMPORT.filter((c) => c.reason).length;
+  document.getElementById("import-summary").textContent =
+    `Found ${PENDING_IMPORT.length} card${PENDING_IMPORT.length === 1 ? "" : "s"}` +
+    (skipped ? `, ${skipped} already in your vault` : "") +
+    (inactive ? `. ${inactive} look inactive and are unticked — tick any you still want.` : ".");
+
+  document.getElementById("import-choose").hidden = true;
+  document.getElementById("import-pick").hidden = false;
+  updateImportCount();
+}
+
+function pickedIndexes() {
+  return [...document.querySelectorAll("#import-list input[data-pick]")]
+    .filter((el) => el.checked).map((el) => Number(el.dataset.pick));
+}
+function updateImportCount() {
+  const n = pickedIndexes().length;
+  const btn = document.getElementById("import-commit");
+  btn.textContent = n ? `Import ${n} card${n === 1 ? "" : "s"}` : "Import";
+  btn.disabled = !n;
+}
+
+async function commitImport() {
+  const chosen = pickedIndexes().map((i) => {
+    const { reason, ...card } = PENDING_IMPORT[i]; // reason is UI-only
+    return card;
+  });
+  if (!chosen.length) return;
+  CARDS = CARDS.concat(chosen);
+  PENDING_IMPORT = [];
   await saveVault();
   closeImport();
   render();
-  toast(skipped ? `Imported ${cards.length}, skipped ${skipped} duplicate${skipped === 1 ? "" : "s"}`
-                : `Imported ${cards.length} card${cards.length === 1 ? "" : "s"}`);
+  toast(`Imported ${chosen.length} card${chosen.length === 1 ? "" : "s"}`);
 }
 
 /* ---------- SVG icons ---------- */
@@ -668,6 +746,9 @@ function renderSyncSheet() {
 }
 
 function openImport() {
+  PENDING_IMPORT = [];
+  document.getElementById("import-pick").hidden = true;
+  document.getElementById("import-choose").hidden = false;
   document.getElementById("import-sheet").hidden = false;
 }
 function closeImport() {
@@ -835,7 +916,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],#s-create,#import-close,#import-file-btn,#import-paste-go,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-import],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout");
   if (!t) return;
 
   /* ----- sync sheet ----- */
@@ -946,6 +1027,18 @@ document.addEventListener("click", async (e) => {
   if (t.hasAttribute("data-import")) return openImport();
   if (t.id === "import-close") return closeImport();
   if (t.id === "import-file-btn") return document.getElementById("lp-file").click();
+  if (t.id === "import-commit") return commitImport();
+  if (t.id === "import-back") {
+    PENDING_IMPORT = [];
+    document.getElementById("import-pick").hidden = true;
+    document.getElementById("import-choose").hidden = false;
+    return;
+  }
+  if (t.id === "import-all" || t.id === "import-none") {
+    const on = t.id === "import-all";
+    document.querySelectorAll("#import-list input[data-pick]").forEach((el) => { el.checked = on; });
+    return updateImportCount();
+  }
   if (t.id === "import-paste-go") {
     const box = document.getElementById("import-text");
     const text = box.value.trim();
@@ -1070,7 +1163,9 @@ document.addEventListener("input", (e) => {
   if (cvv && !cvv.value) setTimeout(() => { if (!cvv.value) cvv.focus(); }, 300);
 });
 document.addEventListener("change", (e) => {
-  if (e.target && e.target.id === "f-network") e.target.dataset.touched = "1";
+  if (!e.target) return;
+  if (e.target.id === "f-network") e.target.dataset.touched = "1";
+  if (e.target.matches("#import-list input[data-pick]")) updateImportCount();
 });
 
 // submit password on Enter
