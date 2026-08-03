@@ -20,6 +20,8 @@ A tiny offline, encrypted store for your card details — a self-hosted stand-in
 
 **Face ID fires on its own.** Returning to a locked vault triggers the Face ID prompt without waiting for a tap, and so does launching the app. This is best-effort: Safari can refuse WebAuthn to a page that hasn't been touched yet, and when it does the app falls back silently to the lock screen's *Unlock with Face ID* button. Nothing is retried in a loop — one attempt per return to the foreground.
 
+**And without the passkey chooser.** That prompt used to arrive behind a second tap asking whether to use a passkey. The credential is registered with `authenticatorAttachment: "platform"` and requested with `transports: ["internal"]` (plus `hints: ["client-device"]`), which tells Safari the key is on *this* device — so it stops offering the choice between a security key, a nearby phone and this iPhone, and goes straight to the face scan. The transport hint is supplied at request time, so passkeys enrolled before this change benefit without being re-enrolled.
+
 ## Updates
 
 The app is cache-first, so a deploy doesn't appear just because you reopened the app. It used to take two full quit-and-relaunch cycles to land: the service worker called `skipWaiting()` and took over immediately, but the page on screen had already loaded the previous build's scripts, so the first relaunch swapped the cache and the second one finally showed the new code.
@@ -37,6 +39,18 @@ Reloading drops the in-memory DEK, so the vault locks — the bar says so when t
 The card number is masked on the main list, with an eye button beside the copy button to reveal it on that card alone; it re-masks when the list next re-renders.
 
 Opening a card shows **everything unmasked** — number and CVV included — since that screen is the point of tapping through. The eye buttons still work, in reverse: they hide a value you don't want on screen.
+
+## Finding and arranging cards
+
+**Search** filters as you type, across every field you can see: label, network, cardholder, notes, expiry and number. The number is matched on digits alone as well, so `4111 1111` finds a card stored unspaced and `41111111` finds a grouped one. Only the card area repaints on each keystroke — re-rendering the header would replace the field under the cursor and lose focus on every letter.
+
+**Sections collapse.** Tap *Favourites*, *Your cards* or *Add-on cards* to fold one away; the count stays visible in the header. Which ones are folded is a per-device view preference, so it lives in `localStorage` and never syncs. Searching ignores collapsing — a filtered list is no place to hide matches — and the folds come back when the search is cleared.
+
+**Drag to reorder.** Hold a card for a moment, then drag it. The hold is what separates a reorder from a scroll: grabbing on contact would turn every flick of the list into a drag, so movement before the timer fires is read as scrolling and cancels the hold. While dragging, a clone follows your finger and the real tile stays in the list, hidden, as the placeholder — the gap you're about to drop into is the actual layout rather than an imitation of it.
+
+Cards reorder within their own section only, since the sections are what decides where a card lives. The position is stored per card and carries a fresh `updatedAt`, so it merges across devices like any other edit. Cards you've never dragged keep their existing creation order and don't shuffle themselves.
+
+Dragging is off while a search is active — the order of a filtered list doesn't mean anything to write back.
 
 ## iCloud sync (optional)
 

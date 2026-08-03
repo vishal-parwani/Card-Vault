@@ -102,7 +102,10 @@ async function registerPasskey() {
       rp: { name: "Card Vault" },
       user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "vault", displayName: "Card Vault" },
       pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
-      authenticatorSelection: { userVerification: "required", residentKey: "preferred" },
+      /* "platform" pins this to the device's own authenticator — Face ID. Left
+         open, the credential could also live on a security key or a nearby
+         phone, and Safari then has to ask which one you meant every time. */
+      authenticatorSelection: { userVerification: "required", residentKey: "preferred", authenticatorAttachment: "platform" },
       extensions: { prf: {} },
     },
   });
@@ -114,7 +117,14 @@ async function getPrfBytes(credId) {
   const assertion = await navigator.credentials.get({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
-      allowCredentials: [{ type: "public-key", id: unb64(credId) }],
+      /* Naming the transport is what removes the extra "use a passkey" tap.
+         Without it Safari can't tell that the credential is on this device, so
+         it offers the choice — security key, nearby device, this iPhone —
+         before it will run Face ID. "internal" says there is only one answer.
+         `hints` says the same thing to browsers that read it; both are ignored
+         where unsupported, and neither needs the passkey to be re-enrolled. */
+      allowCredentials: [{ type: "public-key", id: unb64(credId), transports: ["internal"] }],
+      hints: ["client-device"],
       userVerification: "required",
       extensions: { prf: { eval: { first: PRF_SALT } } },
     },
@@ -177,7 +187,7 @@ async function saveVault() {
   await persistLocal();
   scheduleSync();
 }
-function lock() { cancelAutoLock(); DEK = null; CARDS = []; DELETED = []; render(); }
+function lock() { cancelAutoLock(); DEK = null; CARDS = []; DELETED = []; SEARCH = ""; render(); }
 
 /* ---------- setup / unlock ---------- */
 async function setupVault(password, enableFaceId) {
@@ -790,6 +800,8 @@ const I = {
   eyeD: (on) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.6"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
   star: (on) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? "#D8B36A" : "none"}" stroke="${on ? "#D8B36A" : "rgba(255,255,255,0.7)"}" stroke-width="1.6"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9.1l6.9-.8L12 2z"/></svg>`,
   back: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>`,
+  caret: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>`,
+  search: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>`,
   cloud: (status) => {
     const c = status === "ok" ? "#D8B36A" : status === "error" || status === "fork" ? "#E06B6B" : "#8A8F98";
     const arrows = status === "syncing"
@@ -919,10 +931,78 @@ function cardFaceSmall(c) {
   </div>`;
 }
 
-function section(title, list) {
+/* ---------- list: search, collapsing, manual order ---------- */
+let SEARCH = "";
+
+/* Which sections are folded away is a per-device view preference, not vault
+   content, so it lives in localStorage and never syncs. */
+const COLLAPSE_KEY = "cardvault.collapsed";
+function collapsedSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+function toggleCollapsed(key) {
+  const s = collapsedSet();
+  if (s.has(key)) s.delete(key); else s.add(key);
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...s])); } catch {}
+}
+
+/* Every field you can see on a card is searchable. The number is matched on
+   digits alone as well, so "4111 1111" finds a card stored unspaced and an
+   unspaced query finds a grouped one. */
+function matchesSearch(c, q) {
+  if (!q) return true;
+  const qd = q.replace(/\D/g, "");
+  if (qd.length >= 2 && String(c.number || "").replace(/\D/g, "").includes(qd)) return true;
+  return [c.label, c.network, c.name, c.notes, c.expiry, c.number]
+    .some((f) => String(f || "").toLowerCase().includes(q));
+}
+
+/* Dragged order wins where one has been set; the rest keep the creation order
+   the vault already sorts by, so a card never jumps around on its own. */
+function bySortOrder(a, b) {
+  const ao = Number.isFinite(a.order) ? a.order : Infinity;
+  const bo = Number.isFinite(b.order) ? b.order : Infinity;
+  if (ao !== bo) return ao - bo;
+  return (a.createdAt || 0) - (b.createdAt || 0) || (a.id < b.id ? -1 : 1);
+}
+
+function section(key, title, list) {
   if (!list.length) return "";
-  return `<div class="section"><div class="section-h">${title} <span>· ${list.length}</span></div>
-    <div class="cards">${list.map(cardFaceSmall).join("")}</div></div>`;
+  // A filtered list is no place to hide matches, so collapsing is ignored then.
+  const shut = !SEARCH.trim() && collapsedSet().has(key);
+  return `<div class="section">
+    <button class="section-h" data-collapse="${key}">
+      <span class="caret ${shut ? "" : "open"}">${I.caret}</span>${title} <span class="count">· ${list.length}</span>
+    </button>
+    <div class="cards" data-cards="${key}" ${shut ? "hidden" : ""}>${list.map(cardFaceSmall).join("")}</div>
+  </div>`;
+}
+
+function cardsHtml() {
+  if (!CARDS.length) return `<div class="empty">No cards yet.<br/>Tap “Add card” to store your first one.</div>`;
+  const q = SEARCH.trim().toLowerCase();
+  const hits = CARDS.filter((c) => matchesSearch(c, q));
+  if (!hits.length) return `<div class="empty">Nothing matches “${esc(SEARCH.trim())}”.</div>`;
+  return section("fav", "Favourites", hits.filter((c) => c.favourite).sort(bySortOrder))
+    + section("prim", "Your cards", hits.filter((c) => !c.favourite && c.type !== "addon").sort(bySortOrder))
+    + section("addon", "Add-on cards", hits.filter((c) => !c.favourite && c.type === "addon").sort(bySortOrder));
+}
+
+/* Repaints just the cards. Typing must not re-render the header, or the search
+   field would be replaced under the cursor and lose focus on every keystroke. */
+function renderCards() {
+  const el = document.getElementById("card-scroll");
+  if (el) el.innerHTML = cardsHtml();
+  const meta = document.getElementById("list-meta");
+  if (meta) meta.textContent = listMeta();
+}
+
+function listMeta() {
+  const q = SEARCH.trim().toLowerCase();
+  if (!q) return `${CARDS.length} saved · offline ready`;
+  const n = CARDS.filter((c) => matchesSearch(c, q)).length;
+  return `${n} of ${CARDS.length} shown`;
 }
 
 const FACE_DISMISS_KEY = "cardvault.faceBannerDismissed";
@@ -932,15 +1012,9 @@ function showFaceBanner() {
 }
 
 function viewList() {
-  const favs = CARDS.filter((c) => c.favourite);
-  const prim = CARDS.filter((c) => !c.favourite && c.type !== "addon");
-  const add = CARDS.filter((c) => !c.favourite && c.type === "addon");
-  const body = CARDS.length
-    ? section("Favourites", favs) + section("Your cards", prim) + section("Add-on cards", add)
-    : `<div class="empty">No cards yet.<br/>Tap “Add card” to store your first one.</div>`;
   app().innerHTML = `
     <div class="header">
-      <div><h1>Cards</h1><div class="meta">${CARDS.length} saved · offline ready</div></div>
+      <div><h1>Cards</h1><div class="meta" id="list-meta">${listMeta()}</div></div>
       <div class="hgroup">
         <button class="icon-btn" data-sync>${I.cloud(SYNC.status)}</button>
         <button class="icon-btn" data-lock>${I.lockSm}</button>
@@ -959,7 +1033,14 @@ function viewList() {
           <button class="link" data-facedismiss>Not now</button>
         </div>
       </div>` : ""}
-    <div class="scroll">${body}</div>
+    ${CARDS.length ? `
+      <div class="search-wrap">
+        <span class="search-i">${I.search}</span>
+        <input id="card-search" type="search" placeholder="Search cards" value="${esc(SEARCH)}"
+               autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="search" />
+        <button class="search-x" id="search-clear" aria-label="Clear search" ${SEARCH ? "" : "hidden"}>&times;</button>
+      </div>` : ""}
+    <div class="scroll" id="card-scroll">${cardsHtml()}</div>
     <button class="add-tile" data-add><span class="plus">+</span> Add card</button>
     <div class="list-links">
       <button class="link" data-import>Import from LastPass</button>
@@ -1082,11 +1163,20 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-revealnum],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#update-reload,#update-dismiss");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-revealnum],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#update-reload,#update-dismiss,[data-collapse],#search-clear");
   if (!t) return;
 
   if (t.id === "update-reload") { t.disabled = true; t.textContent = "Reloading…"; return applyUpdate(); }
   if (t.id === "update-dismiss") return showUpdateBar(false);
+
+  if (t.dataset.collapse) { toggleCollapsed(t.dataset.collapse); return renderCards(); }
+  if (t.id === "search-clear") {
+    SEARCH = "";
+    const box = document.getElementById("card-search");
+    if (box) { box.value = ""; box.focus(); }
+    t.hidden = true;
+    return renderCards();
+  }
 
   /* ----- sync sheet ----- */
   if (t.hasAttribute("data-sync")) return openSync();
@@ -1306,12 +1396,14 @@ document.addEventListener("click", async (e) => {
       favourite: document.querySelector('[data-t="fav"]').classList.contains("on"),
       type: document.querySelector('[data-t="addon"]').classList.contains("on") ? "addon" : "primary",
       accent: "#fff",
+      order: prev ? prev.order : undefined, // rebuilt wholesale; keep its place
       createdAt: (prev && prev.createdAt) || now,
       updatedAt: now,
     };
     if (prev) {
       CARDS[CARDS.findIndex((x) => x.id === t.dataset.save)] = rec;
     } else CARDS.push(rec);
+    SEARCH = ""; // else the card you just saved may not match, and looks lost
     await saveVault(); toast("Saved"); return go("list");
   }
 
@@ -1405,6 +1497,15 @@ document.addEventListener("input", (e) => {
   if (e.target && e.target.matches("[data-f][data-i]")) applyPickEdit(e.target);
 });
 
+/* Filters as you type. Only the card area is repainted — see renderCards. */
+document.addEventListener("input", (e) => {
+  if (!e.target || e.target.id !== "card-search") return;
+  SEARCH = e.target.value;
+  const x = document.getElementById("search-clear");
+  if (x) x.hidden = !SEARCH;
+  renderCards();
+});
+
 // submit password on Enter
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
@@ -1418,6 +1519,110 @@ let AUTH_UNTIL = 0;
 document.addEventListener("click", (e) => {
   if (e.target.closest("#sync-auth-wrap")) AUTH_UNTIL = Date.now() + 120000;
 });
+
+/* ---------- drag to reorder ----------
+   Hold a card for a moment, then drag it. The hold is the point: the list
+   scrolls, and grabbing on contact would turn every scroll into a reorder, so
+   movement before the timer fires is read as a scroll and cancels the hold.
+
+   While dragging, a fixed clone follows the finger and the real tile stays in
+   the flow, hidden, as the placeholder — so the gap you are about to drop into
+   is the actual layout rather than something drawn to imitate it. */
+const HOLD_MS = 400, HOLD_SLOP = 10;
+let DRAG = null, hold = null, holdTimer = null, dragEndedAt = 0;
+
+function cancelHold() {
+  clearTimeout(holdTimer);
+  holdTimer = null; hold = null;
+}
+
+function startDrag(x, y) {
+  const tile = hold.tile;
+  const r = tile.getBoundingClientRect();
+  const ghost = tile.cloneNode(true);
+  /* The clone carries the same data-* hooks as the original; strip them so a
+     stray lookup can never land on a node that is about to be thrown away. */
+  ghost.removeAttribute("data-open");
+  ghost.querySelectorAll("[data-listnum],[data-cvv],[data-fav],[data-copy],[data-revealnum],[data-revealcvv]")
+    .forEach((el) => ["data-listnum", "data-cvv", "data-fav", "data-copy", "data-revealnum", "data-revealcvv"]
+      .forEach((a) => el.removeAttribute(a)));
+  ghost.className = tile.className + " drag-ghost";
+  ghost.style.cssText += `;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;`;
+  document.body.appendChild(ghost);
+
+  DRAG = { tile, ghost, list: tile.parentElement, x, y };
+  tile.classList.add("drag-src");
+  document.body.classList.add("dragging");
+  dragMove(x, y);
+}
+
+function dragMove(x, y) {
+  const d = DRAG;
+  d.ghost.style.transform = `translate(${x - d.x}px, ${y - d.y}px) scale(1.04)`;
+  /* Drop before the first tile whose midpoint is below the finger, else last.
+     Moving the real tile is what makes the gap open up. */
+  const target = [...d.list.children].find((s) => {
+    if (s === d.tile) return false;
+    const r = s.getBoundingClientRect();
+    return y < r.top + r.height / 2;
+  });
+  if (target !== d.tile.nextElementSibling) d.list.insertBefore(d.tile, target || null);
+}
+
+async function endDrag() {
+  const d = DRAG;
+  DRAG = null;
+  d.ghost.remove();
+  d.tile.classList.remove("drag-src");
+  document.body.classList.remove("dragging");
+  dragEndedAt = Date.now(); // the pointerup becomes a click on the tile; swallow it
+
+  // Renumber the section from what the DOM now shows.
+  let changed = false;
+  [...d.list.children].forEach((el, i) => {
+    const c = CARDS.find((x) => x.id === el.dataset.open);
+    if (!c || c.order === i) return;
+    c.order = i;
+    c.updatedAt = Date.now(); // so the new position merges across devices
+    changed = true;
+  });
+  if (changed) await saveVault();
+  render();
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (DRAG || !DEK) return;
+  if (SEARCH.trim()) return;                 // order is ambiguous in a filtered list
+  if (e.target.closest("button")) return;    // star, copy and eye stay tappable
+  const tile = e.target.closest(".card[data-open]");
+  if (!tile || !tile.parentElement.dataset.cards) return;
+  hold = { tile, x: e.clientX, y: e.clientY, id: e.pointerId };
+  holdTimer = setTimeout(() => { holdTimer = null; startDrag(hold.x, hold.y); }, HOLD_MS);
+});
+
+document.addEventListener("pointermove", (e) => {
+  if (DRAG) return dragMove(e.clientX, e.clientY);
+  if (!hold || e.pointerId !== hold.id) return;
+  if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > HOLD_SLOP) cancelHold();
+});
+
+document.addEventListener("pointerup", () => { if (DRAG) endDrag(); else cancelHold(); });
+document.addEventListener("pointercancel", () => { if (DRAG) endDrag(); else cancelHold(); });
+
+/* iOS scrolls the page on touchmove unless the default is refused, and it will
+   not honour a touch-action set only once the drag has already begun. */
+document.addEventListener("touchmove", (e) => { if (DRAG) e.preventDefault(); }, { passive: false });
+
+/* A drag ends with a click on the tile it started from, which would open the
+   card. Swallow anything landing in the moment after a drop — a window rather
+   than a one-shot flag, because the re-render can replace the tile before the
+   click arrives, and a flag left armed would then eat the next real tap. */
+const CLICK_DEAD_MS = 300;
+document.addEventListener("click", (e) => {
+  if (Date.now() - dragEndedAt > CLICK_DEAD_MS) return;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
 
 /* ---------- app updates ----------
    The service worker installs a new build and waits rather than taking over, so

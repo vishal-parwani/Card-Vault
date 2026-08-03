@@ -75,16 +75,47 @@ label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; let
 /* list */
 .scroll { overflow-y:auto; flex:1; padding-bottom:12px; -webkit-overflow-scrolling: touch; }
 .section { margin-bottom:22px; }
-.section-h { font-size:11px; font-weight:600; color:var(--dim); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; }
-.section-h span { color: rgba(255,255,255,.25); }
+.section-h {
+  display:flex; align-items:center; gap:7px; width:100%; padding:2px 0;
+  font-size:11px; font-weight:600; color:var(--dim); text-transform:uppercase;
+  letter-spacing:1px; margin-bottom:12px; text-align:left;
+}
+.section-h .count { color: rgba(255,255,255,.25); }
+.section-h .caret { display:flex; color:rgba(255,255,255,.35); transition:transform .18s ease; }
+.section-h .caret.open { transform:rotate(90deg); }
 .cards { display:flex; flex-direction:column; gap:12px; }
+/* display:flex would otherwise beat the hidden attribute */
+.cards[hidden] { display:none; }
+
+/* search */
+.search-wrap { position:relative; margin-bottom:16px; }
+.search-wrap .search-i { position:absolute; left:13px; top:50%; transform:translateY(-50%); display:flex; pointer-events:none; }
+#card-search { padding:11px 40px; font-size:15px; }
+#card-search::-webkit-search-cancel-button, #card-search::-webkit-search-decoration { -webkit-appearance:none; display:none; }
+.search-x {
+  position:absolute; right:8px; top:50%; transform:translateY(-50%);
+  width:26px; height:26px; border-radius:50%; background:var(--line);
+  color:var(--txt); font-size:17px; line-height:1; display:flex; align-items:center; justify-content:center;
+}
+.search-x[hidden] { display:none; }
 
 /* card face */
 .card {
   border-radius:18px; padding:15px 17px; color:#fff; position:relative; overflow:hidden;
   box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06);
   display:flex; flex-direction:column; gap:12px;
+  /* a long hold is a drag, not a text selection or a callout menu */
+  -webkit-touch-callout:none; -webkit-user-select:none; user-select:none;
 }
+
+/* drag to reorder */
+.card.drag-src { opacity:.18; }
+.card.drag-ghost {
+  position:fixed; z-index:180; margin:0; pointer-events:none;
+  box-shadow: 0 24px 55px rgba(0,0,0,.6);
+}
+body.dragging { -webkit-user-select:none; user-select:none; }
+body.dragging .scroll { overflow:hidden; }
 .card.big { aspect-ratio: 1.586/1; justify-content:space-between; padding:22px; gap:0; }
 .card .sheen { position:absolute; inset:0; pointer-events:none; background: radial-gradient(120% 80% at 100% 0%, rgba(255,255,255,.10), transparent 55%); }
 .card .top { display:flex; justify-content:space-between; align-items:flex-start; }
