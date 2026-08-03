@@ -1,4 +1,4 @@
-const CACHE = "card-vault-v23";
+const CACHE = "card-vault-v24";
 const ASSETS = [
   "./",
   "./index.html",
@@ -12,13 +12,14 @@ const ASSETS = [
   "./icons/apple-touch-icon.png",
 ];
 
-/* No skipWaiting here on purpose. Taking over immediately swapped the cache out
-   from under a page still running the previous build — the app looked unchanged
-   until it was quit and relaunched twice, since the visible page had already
-   loaded the old scripts. A new build now installs and waits; the page notices,
-   offers a reload, and promotes it below only when the user accepts. */
+/* skipWaiting is required, not optional. Without it a new build parks in
+   "waiting" until every client using the old worker goes away — and an older
+   build has no reload prompt to promote it, while iOS keeps the page alive as a
+   client across app switches. That combination strands a device on a stale
+   build permanently. Activating immediately means the worst case is seeing the
+   new version one launch later; the update bar below just makes that instant. */
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("message", (e) => {

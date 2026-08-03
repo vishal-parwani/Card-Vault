@@ -1629,7 +1629,7 @@ document.addEventListener("click", (e) => {
    the page decides when to swap. Without that the app kept serving whatever it
    had already loaded and looked unchanged until it was quit and relaunched
    twice — the reason a deploy never seemed to arrive. */
-let SW_REG = null, lastUpdateCheck = 0;
+let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
 function showUpdateBar(on) {
   const el = document.getElementById("update-bar");
@@ -1638,6 +1638,18 @@ function showUpdateBar(on) {
   const sub = el.querySelector(".update-s");
   if (sub) sub.textContent = DEK ? "Reloading locks the vault." : "Reload to install it.";
   el.hidden = !on;
+}
+
+/* The worker now activates as soon as it installs, so a page can find itself
+   controlled by a newer build than the scripts it is running. Reload once when
+   that happens, so the running code and the cache never disagree. */
+function watchForController() {
+  if (!navigator.serviceWorker.controller) return; // first install, nothing stale
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (SW_RELOADING) return;
+    SW_RELOADING = true;
+    location.reload();
+  });
 }
 
 function watchForUpdate(reg) {
@@ -1663,10 +1675,9 @@ function checkForUpdate() {
 }
 
 function applyUpdate() {
-  if (!SW_REG || !SW_REG.waiting) return location.reload();
-  // Reload only once the new worker is in charge, so the fresh files are the
-  // ones that load — reloading first would just re-run the old build.
-  navigator.serviceWorker.addEventListener("controllerchange", () => location.reload(), { once: true });
+  if (SW_RELOADING) return;
+  if (!SW_REG || !SW_REG.waiting) { SW_RELOADING = true; return location.reload(); }
+  // controllerchange (watched above) reloads once the new worker takes over.
   SW_REG.waiting.postMessage({ type: "SKIP_WAITING" });
 }
 
@@ -1791,6 +1802,7 @@ window.addEventListener("online", () => scheduleSync());
     try {
       // register() checks for a new worker itself, so don't immediately re-ask.
       lastUpdateCheck = Date.now();
+      watchForController();
       watchForUpdate(await navigator.serviceWorker.register("./service-worker.js"));
     } catch {}
   }
