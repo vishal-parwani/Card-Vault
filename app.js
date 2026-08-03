@@ -507,15 +507,37 @@ function detectNetwork(num) {
 }
 
 /* ---------- helpers ---------- */
+const digitsOf = (s) => String(s || "").replace(/\D/g, "");
+
+/* Group a number for display. Whatever spacing it was typed or imported with is
+   ignored, so a hand-entered card and a LastPass one look identical. Grouping
+   follows the number itself rather than the stored network label, which can be
+   wrong: Amex is 4-6-5, 14-digit Diners is 4-6-4, everything else is fours.
+   Purely visual — the spaces are never part of what gets copied. */
+function groupNum(num) {
+  const d = digitsOf(num);
+  if (!d) return String(num || "").trim();
+  const out = [];
+  const sizes = d.length === 15 && /^3[47]/.test(d) ? [4, 6, 5]
+              : d.length === 14 ? [4, 6, 4]
+              : null;
+  if (sizes) {
+    let i = 0;
+    for (const n of sizes) { out.push(d.slice(i, i + n)); i += n; }
+    if (i < d.length) out.push(d.slice(i)); // anything unexpected still shows
+  } else {
+    for (let i = 0; i < d.length; i += 4) out.push(d.slice(i, i + 4));
+  }
+  return out.filter(Boolean).join(" ");
+}
+
+// Same grouping, with every group but the last replaced by dots of equal width.
 function maskNum(num) {
-  const s = String(num || "").trim();
-  if (!s) return s;
-  const p = s.split(/\s+/);
-  // Grouped numbers keep their shape, showing only the last group.
-  if (p.length > 1) return p.map((x, i) => (i === p.length - 1 ? x : "••••")).join(" ");
-  // Imported numbers arrive unspaced, and must still be masked.
-  const digits = s.replace(/\D/g, "");
-  return digits.length > 4 ? "•••• " + digits.slice(-4) : s;
+  const g = groupNum(num);
+  if (!g) return g;
+  const parts = g.split(" ");
+  if (parts.length < 2) return parts[0].length > 4 ? "•••• " + parts[0].slice(-4) : g;
+  return parts.map((p, i) => (i === parts.length - 1 ? p : "•".repeat(p.length))).join(" ");
 }
 function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -980,7 +1002,7 @@ function section(key, title, list) {
 }
 
 function cardsHtml() {
-  if (!CARDS.length) return `<div class="empty">No cards yet.<br/>Tap “Add card” to store your first one.</div>`;
+  if (!CARDS.length) return `<div class="empty">No cards yet.<br/>Tap + above to store your first one.</div>`;
   const q = SEARCH.trim().toLowerCase();
   const hits = CARDS.filter((c) => matchesSearch(c, q));
   if (!hits.length) return `<div class="empty">Nothing matches “${esc(SEARCH.trim())}”.</div>`;
@@ -1016,6 +1038,7 @@ function viewList() {
     <div class="header">
       <div><h1>Cards</h1><div class="meta" id="list-meta">${listMeta()}</div></div>
       <div class="hgroup">
+        <button class="icon-btn" data-add aria-label="Add card"><span class="plus">+</span></button>
         <button class="icon-btn" data-sync>${I.cloud(SYNC.status)}</button>
         <button class="icon-btn" data-lock>${I.lockSm}</button>
       </div>
@@ -1041,7 +1064,6 @@ function viewList() {
         <button class="search-x" id="search-clear" aria-label="Clear search" ${SEARCH ? "" : "hidden"}>&times;</button>
       </div>` : ""}
     <div class="scroll" id="card-scroll">${cardsHtml()}</div>
-    <button class="add-tile" data-add><span class="plus">+</span> Add card</button>
     <div class="list-links">
       <button class="link" data-import>Import from LastPass</button>
       ${prfSupportedUA() && !showFaceBanner() ? `<button class="link" data-facesetup>${faceIdIsLocal() ? "Re-enrol" : "Set up"} Face ID here</button>` : ""}
@@ -1056,11 +1078,11 @@ function viewDetail() {
     <div class="card big" style="background:${gradientFor(c.network)}">
       <div class="sheen"></div>
       <div class="top"><div><div class="label">${esc(c.label)}</div><div class="network">${esc(c.network)}</div></div><div class="chip"></div></div>
-      <div class="num big" style="color:${c.accent || "#fff"}" data-num>${esc(c.number)}</div>
+      <div class="num big" style="color:${c.accent || "#fff"}" data-num>${esc(groupNum(c.number))}</div>
       <div class="bottom"><div class="v">${esc(c.name)}</div><div class="v">${esc(c.expiry)}</div></div>
     </div>
     <div class="rows">
-      <div class="row"><div><div class="k">Card number</div><div class="v" data-fnum>${esc(c.number)}</div></div>
+      <div class="row"><div><div class="k">Card number</div><div class="v" data-fnum>${esc(groupNum(c.number))}</div></div>
         <div class="acts"><button class="icon-btn" data-toggle="num">${I.eyeD(true)}</button><button class="icon-btn" data-copy="number" data-id="${c.id}">${I.copyGold}</button></div></div>
       <div class="row"><div><div class="k">Expiry</div><div class="v">${esc(c.expiry)}</div></div>
         <div class="acts"><button class="icon-btn" data-copy="expiry" data-id="${c.id}">${I.copyGold}</button></div></div>
@@ -1266,7 +1288,7 @@ document.addEventListener("click", async (e) => {
   // copy fields
   if (t.dataset.copy) {
     const c = CARDS.find((x) => x.id === t.dataset.id);
-    const map = { number: c.number, expiry: c.expiry, cvv: c.cvv };
+    const map = { number: digitsOf(c.number), expiry: c.expiry, cvv: c.cvv };
     const labels = { number: "Number", expiry: "Expiry", cvv: "CVV" };
     return copy(map[t.dataset.copy], labels[t.dataset.copy]);
   }
@@ -1279,7 +1301,7 @@ document.addEventListener("click", async (e) => {
     const span = document.querySelector(`[data-listnum="${c.id}"]`);
     const shown = span.dataset.shown === "1";
     span.dataset.shown = shown ? "" : "1";
-    span.textContent = shown ? maskNum(c.number) : c.number;
+    span.textContent = shown ? maskNum(c.number) : groupNum(c.number);
     t.innerHTML = I.eye(!shown);
     return;
   }
@@ -1357,9 +1379,10 @@ document.addEventListener("click", async (e) => {
     const c = CARDS.find((x) => x.id === VIEW.cardId);
     if (t.dataset.toggle === "num") {
       const el = document.querySelector("[data-fnum]");
-      const shown = el.textContent === c.number;
-      el.textContent = shown ? maskNum(c.number) : c.number;
-      document.querySelector("[data-num]").textContent = shown ? maskNum(c.number) : c.number;
+      const shown = el.dataset.shown === "1";   // a flag, not a string compare
+      el.dataset.shown = shown ? "" : "1";
+      el.textContent = shown ? maskNum(c.number) : groupNum(c.number);
+      document.querySelector("[data-num]").textContent = shown ? maskNum(c.number) : groupNum(c.number);
       t.innerHTML = I.eyeD(!shown);
     } else {
       const el = document.querySelector("[data-fcvv]");
