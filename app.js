@@ -209,6 +209,32 @@ function deviceId() {
 }
 function faceIdIsLocal() { return !!(META && META.prf && META.prf.device === deviceId()); }
 
+/* Two ways to get Face ID working here:
+     link  — the vault already carries a passkey and iCloud Keychain has synced
+             it to this device, so it can be used as-is. No new credential.
+     register — no usable passkey, so enrol a fresh one.
+   Linking is tried first, which is what stops a reinstall from leaving a trail
+   of orphaned passkeys for the same site. */
+async function enableFaceId() {
+  if (META && META.prf && META.prf.credId) {
+    try {
+      const bytes = await getPrfBytes(META.prf.credId);
+      META.prf = {
+        credId: META.prf.credId,
+        device: deviceId(),
+        wrapped: await wrap(await prfKek(bytes), DEK),
+      };
+      await idbSet("meta", META);
+      return "linked";
+    } catch (e) {
+      // Passkey isn't available here (never synced, or removed) — enrol instead.
+      console.warn("[CardVault] couldn't link existing passkey:", e);
+    }
+  }
+  await addFaceId();
+  return "registered";
+}
+
 async function addFaceId() {
   const credId = await registerPasskey();
   const bytes = await getPrfBytes(credId);
@@ -879,11 +905,13 @@ function viewList() {
     ${showFaceBanner() ? `
       <div class="banner">
         <div class="banner-txt">
-          <div class="banner-t">${I.faceGold} Turn on Face ID</div>
-          <div class="banner-s">${META.prf ? "The Face ID set up on your other device can't unlock this one." : "Unlock without typing your master password."} Takes a second.</div>
+          <div class="banner-t">${I.faceGold} ${META.prf ? "Use Face ID here" : "Turn on Face ID"}</div>
+          <div class="banner-s">${META.prf
+            ? "This vault came from another device. Link its Face ID to unlock here without your master password."
+            : "Unlock without typing your master password."}</div>
         </div>
         <div class="banner-acts">
-          <button class="btn-primary" data-facesetup>Enable Face ID</button>
+          <button class="btn-primary" data-facesetup>${META.prf ? "Link Face ID" : "Enable Face ID"}</button>
           <button class="link" data-facedismiss>Not now</button>
         </div>
       </div>` : ""}
@@ -891,7 +919,7 @@ function viewList() {
     <button class="add-tile" data-add><span class="plus">+</span> Add card</button>
     <div class="list-links">
       <button class="link" data-import>Import from LastPass</button>
-      ${prfSupportedUA() && !showFaceBanner() ? `<button class="link" data-facesetup>${faceIdIsLocal() ? "Re-enrol" : "Enable"} Face ID here</button>` : ""}
+      ${prfSupportedUA() && !showFaceBanner() ? `<button class="link" data-facesetup>${faceIdIsLocal() ? "Re-enrol" : "Set up"} Face ID here</button>` : ""}
     </div>`;
 }
 
@@ -965,7 +993,8 @@ function viewSetup() {
 }
 
 function viewLock() {
-  const hasFace = !!(META && META.prf);
+  const hasFace = faceIdIsLocal();          // never offer another device's passkey
+  const inherited = !!(META && META.prf) && !hasFace;
   app().innerHTML = `
     <div class="center">
       <div class="lock-badge">${I.lock}</div>
@@ -977,6 +1006,7 @@ function viewLock() {
           <button class="btn-primary" id="u-pw-go" style="margin-top:12px">Unlock</button>
         </div>
         ${hasFace ? `<button class="link" id="u-usepw">Use master password</button>` : ""}
+        ${inherited ? `<div class="hint">Face ID was set up on another device. Unlock with your master password and you can turn it on here in one tap.</div>` : ""}
         <div class="err" id="u-err"></div>
       </div>
     </div>`;
@@ -1109,10 +1139,10 @@ document.addEventListener("click", async (e) => {
   }
   if (t.hasAttribute("data-facesetup")) {
     try {
-      await addFaceId();      // re-wraps this device's DEK with a local passkey
+      const how = await enableFaceId();
       try { localStorage.removeItem(FACE_DISMISS_KEY); } catch {}
       scheduleSync();
-      toast("Face ID enabled");
+      toast(how === "linked" ? "Face ID linked" : "Face ID enabled");
       render();
     } catch (ex) {
       alert("Couldn't set up Face ID on this device.\n\n" + ((ex && ex.message) || ex));
