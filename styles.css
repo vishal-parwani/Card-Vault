@@ -174,7 +174,9 @@ body.dragging .scroll { overflow:hidden; }
 
 /* update prompt — sits under the privacy shield, over everything else */
 #update-bar {
-  position:fixed; z-index:150; left:12px; right:12px;
+  /* above the privacy shield (200): the bar holds no card data, and being
+     covered by the shield is what stopped the announcement being seen */
+  position:fixed; z-index:210; left:12px; right:12px;
   bottom: calc(12px + env(safe-area-inset-bottom));
   max-width:456px; margin:0 auto;
   background:var(--ink2); border:1px solid rgba(216,179,106,.35); border-radius:14px;

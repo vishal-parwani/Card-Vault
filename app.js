@@ -846,7 +846,7 @@ function toast(msg) {
 const app = () => document.getElementById("app");
 let VIEW = { name: "boot", cardId: null };
 
-function go(name, cardId = null) { VIEW = { name, cardId }; render(); }
+function go(name, cardId = null) { VIEW = { name, cardId }; render(); reassertUpdateBar(); }
 
 /* ---------- sync sheet ----------
    Updated field-by-field rather than by innerHTML: the Apple sign-in button is
@@ -1648,7 +1648,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "27";
+const APP_VERSION = "28";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
@@ -1687,7 +1687,12 @@ async function forceUpdate() {
   location.replace(u.toString());
 }
 
+/* Remembered separately from the DOM: the bar must survive re-renders, the
+   privacy shield, and an unlock, and be re-asserted afterwards. */
+let UPDATE_PENDING = false;
+
 function showUpdateBar(on) {
+  UPDATE_PENDING = !!on;
   const el = document.getElementById("update-bar");
   if (!el) return;
   // Reloading drops the in-memory DEK, but only say so when there is one.
@@ -1759,6 +1764,13 @@ function startAutoLock() {
 
 /* Card details are still in the DOM during the grace period, and iOS snapshots
    the screen for the app switcher on the way out. Cover it. */
+// The shield sits above everything; re-show the bar once it lifts.
+function reassertUpdateBar() {
+  if (!UPDATE_PENDING) return;
+  const el = document.getElementById("update-bar");
+  if (el) el.hidden = false;
+}
+
 function privacyShield(on) {
   let el = document.getElementById("privacy-shield");
   if (!on) { if (el) el.hidden = true; return; }
@@ -1777,6 +1789,10 @@ function privacyShield(on) {
    this is best-effort: on refusal the lock screen's button is still there. */
 let FACE_BUSY = false;
 async function maybeAutoFaceId() {
+  // An update announcement outranks the automatic unlock: the Face ID sheet
+  // covers the screen, so prompting first meant the bar was never seen. The
+  // lock screen's own button still works, and dismissing the bar resumes this.
+  if (UPDATE_PENDING) return;
   if (FACE_BUSY || DEK || !META || document.hidden || SHEET_OPEN) return;
   if (!faceIdIsLocal()) return;
   FACE_BUSY = true;
@@ -1793,6 +1809,7 @@ document.addEventListener("visibilitychange", () => {
     return;
   }
   privacyShield(false);
+  reassertUpdateBar();
   const away = hiddenAt ? Date.now() - hiddenAt : 0;
   cancelAutoLock();
   AUTH_UNTIL = 0;
