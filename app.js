@@ -939,7 +939,7 @@ function cardFaceSmall(c) {
     <div class="numrow">
       <span class="num" style="color:${c.accent || "#fff"}" data-listnum="${c.id}">${maskNum(c.number)}</span>
       <div class="numacts">
-        <button class="oncard-btn" data-revealnum="${c.id}">${I.eye(false)}</button>
+        <button class="oncard-btn" data-reveal="${c.id}" aria-label="Show number and CVV">${I.eye(false)}</button>
         <button class="oncard-btn" data-copy="number" data-id="${c.id}">${I.copy}</button>
       </div>
     </div>
@@ -947,7 +947,6 @@ function cardFaceSmall(c) {
       <div class="field"><span class="k">EXP</span><span class="v">${esc(c.expiry)}</span>
         <button class="oncard-btn" data-copy="expiry" data-id="${c.id}">${I.copy}</button></div>
       <div class="field"><span class="k">CVV</span><span class="v" data-cvv="${c.id}">•••</span>
-        <button class="oncard-btn" data-revealcvv="${c.id}">${I.eye(false)}</button>
         <button class="oncard-btn" data-copy="cvv" data-id="${c.id}">${I.copy}</button></div>
     </div>
   </div>`;
@@ -1185,7 +1184,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-revealcvv],[data-revealnum],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#update-reload,#update-dismiss,[data-collapse],#search-clear");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-reveal],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#update-reload,#update-dismiss,[data-collapse],#search-clear");
   if (!t) return;
 
   if (t.id === "update-reload") { t.disabled = true; t.textContent = "Reloading…"; return applyUpdate(); }
@@ -1276,7 +1275,7 @@ document.addEventListener("click", async (e) => {
   }
 
   // list: open card
-  if (t.dataset.open && !e.target.closest("[data-fav],[data-copy],[data-revealcvv],[data-revealnum]")) return go("detail", t.dataset.open);
+  if (t.dataset.open && !e.target.closest("[data-fav],[data-copy],[data-reveal]")) return go("detail", t.dataset.open);
 
   // favourite toggle
   if (t.dataset.fav) {
@@ -1293,25 +1292,18 @@ document.addEventListener("click", async (e) => {
     return copy(map[t.dataset.copy], labels[t.dataset.copy]);
   }
 
-  // reveal number on list card. State lives on the span, not in the text: a
-  // number short enough that maskNum leaves it alone would otherwise read as
-  // "already revealed" and the toggle would do nothing.
-  if (t.dataset.revealnum) {
-    const c = CARDS.find((x) => x.id === t.dataset.revealnum);
-    const span = document.querySelector(`[data-listnum="${c.id}"]`);
-    const shown = span.dataset.shown === "1";
-    span.dataset.shown = shown ? "" : "1";
-    span.textContent = shown ? maskNum(c.number) : groupNum(c.number);
-    t.innerHTML = I.eye(!shown);
-    return;
-  }
-
-  // reveal cvv on list card
-  if (t.dataset.revealcvv) {
-    const c = CARDS.find((x) => x.id === t.dataset.revealcvv);
-    const span = document.querySelector(`[data-cvv="${c.id}"]`);
-    const shown = span.textContent !== "•••";
-    span.textContent = shown ? "•••" : c.cvv;
+  /* One eye per tile shows the number and the CVV together — they are wanted at
+     the same moment, and two toggles meant two taps for one intent. State lives
+     on the number span rather than in its text: a number short enough that
+     maskNum leaves it alone would otherwise read as "already revealed". */
+  if (t.dataset.reveal) {
+    const c = CARDS.find((x) => x.id === t.dataset.reveal);
+    const num = document.querySelector(`[data-listnum="${c.id}"]`);
+    const cvv = document.querySelector(`[data-cvv="${c.id}"]`);
+    const shown = num.dataset.shown === "1";
+    num.dataset.shown = shown ? "" : "1";
+    num.textContent = shown ? maskNum(c.number) : groupNum(c.number);
+    if (cvv) cvv.textContent = shown ? "•••" : (c.cvv || "—");
     t.innerHTML = I.eye(!shown);
     return;
   }
@@ -1566,8 +1558,8 @@ function startDrag(x, y) {
   /* The clone carries the same data-* hooks as the original; strip them so a
      stray lookup can never land on a node that is about to be thrown away. */
   ghost.removeAttribute("data-open");
-  ghost.querySelectorAll("[data-listnum],[data-cvv],[data-fav],[data-copy],[data-revealnum],[data-revealcvv]")
-    .forEach((el) => ["data-listnum", "data-cvv", "data-fav", "data-copy", "data-revealnum", "data-revealcvv"]
+  ghost.querySelectorAll("[data-listnum],[data-cvv],[data-fav],[data-copy],[data-reveal]")
+    .forEach((el) => ["data-listnum", "data-cvv", "data-fav", "data-copy", "data-reveal"]
       .forEach((a) => el.removeAttribute(a)));
   ghost.className = tile.className + " drag-ghost";
   ghost.style.cssText += `;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;`;
@@ -1656,7 +1648,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "26";
+const APP_VERSION = "27";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
