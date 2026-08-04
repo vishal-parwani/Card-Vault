@@ -481,8 +481,8 @@ const GRADIENTS = {
      enough of its network's identity to stay recognisable at a glance. */
   "Diners Club":      "linear-gradient(135deg,#5c3d2e 0%,#7a5642 55%,#3d2b1f 100%)",
   "Visa":             "linear-gradient(135deg,#5b5070 0%,#7a6b8f 55%,#463d57 100%)",
-  "Mastercard":       "linear-gradient(135deg,#a86844 0%,#c4845a 55%,#8a5436 100%)",
-  "American Express": "linear-gradient(135deg,#4f6f55 0%,#6b8f71 55%,#3c5741 100%)",
+  "Mastercard":       "linear-gradient(135deg,#4f6f55 0%,#6b8f71 55%,#3c5741 100%)",
+  "American Express": "linear-gradient(135deg,#a86844 0%,#c4845a 55%,#8a5436 100%)",
   "RuPay":            "linear-gradient(135deg,#a5801f 0%,#c49a3c 55%,#856717 100%)",
   "Other":            "linear-gradient(135deg,#6b5647 0%,#8a7365 55%,#4f3f34 100%)",
 };
@@ -1652,7 +1652,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "31";
+const APP_VERSION = "32";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
