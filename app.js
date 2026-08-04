@@ -475,12 +475,16 @@ async function copy(text, label) {
 
 /* ---------- gradients by network ---------- */
 const GRADIENTS = {
-  "Diners Club": "linear-gradient(135deg,#1a1a1a 0%,#2b2b2b 45%,#0d0d0d 100%)",
-  "Visa": "linear-gradient(135deg,#0f2027 0%,#203a43 50%,#2c5364 100%)",
-  "Mastercard": "linear-gradient(135deg,#3a2b2b 0%,#5b3a3a 55%,#241717 100%)",
-  "American Express": "linear-gradient(135deg,#3a3f4a 0%,#5b6472 55%,#2c313a 100%)",
-  "RuPay": "linear-gradient(135deg,#14342b 0%,#1f5140 55%,#0d211b 100%)",
-  "Other": "linear-gradient(135deg,#23262c 0%,#33373f 55%,#14171c 100%)",
+  /* Built from the Cards Tracker accents — indigo, terracotta, sage, amber —
+     rather than the old near-blacks, so a card reads as a coloured object
+     sitting on the cream page instead of a hole punched through it. Each keeps
+     enough of its network's identity to stay recognisable at a glance. */
+  "Diners Club":      "linear-gradient(135deg,#5c3d2e 0%,#7a5642 55%,#3d2b1f 100%)",
+  "Visa":             "linear-gradient(135deg,#5b5070 0%,#7a6b8f 55%,#463d57 100%)",
+  "Mastercard":       "linear-gradient(135deg,#a86844 0%,#c4845a 55%,#8a5436 100%)",
+  "American Express": "linear-gradient(135deg,#4f6f55 0%,#6b8f71 55%,#3c5741 100%)",
+  "RuPay":            "linear-gradient(135deg,#a5801f 0%,#c49a3c 55%,#856717 100%)",
+  "Other":            "linear-gradient(135deg,#6b5647 0%,#8a7365 55%,#4f3f34 100%)",
 };
 const NETWORKS = Object.keys(GRADIENTS);
 function gradientFor(network) { return GRADIENTS[network] || GRADIENTS.Other; }
@@ -812,20 +816,20 @@ async function commitImport() {
 
 /* ---------- SVG icons ---------- */
 const I = {
-  lock: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.6"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
-  lockSm: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
-  faceGold: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.8"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M9 15c1 1 5 1 6 0"/></svg>`,
-  face: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1a1400" stroke-width="1.8"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M9 15c1 1 5 1 6 0"/></svg>`,
+  lock: `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#c4845a" stroke-width="1.6"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
+  lockSm: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.7"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>`,
+  faceGold: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c4845a" stroke-width="1.8"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M9 15c1 1 5 1 6 0"/></svg>`,
+  face: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff8f2" stroke-width="1.8"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M9 10v1M15 10v1M9 15c1 1 5 1 6 0"/></svg>`,
   copy: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.7"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
-  copyGold: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D8B36A" stroke-width="1.6"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
+  copyGold: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c4845a" stroke-width="1.6"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`,
   eye: (on) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
-  eyeD: (on) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.6"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
-  star: (on) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? "#D8B36A" : "none"}" stroke="${on ? "#D8B36A" : "rgba(255,255,255,0.7)"}" stroke-width="1.6"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9.1l6.9-.8L12 2z"/></svg>`,
-  back: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>`,
+  eyeD: (on) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.6"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
+  star: (on) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? "#c4845a" : "none"}" stroke="${on ? "#c4845a" : "rgba(255,255,255,0.7)"}" stroke-width="1.6"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9.1l6.9-.8L12 2z"/></svg>`,
+  back: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>`,
   caret: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>`,
-  search: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8A8F98" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>`,
+  search: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>`,
   cloud: (status) => {
-    const c = status === "ok" ? "#D8B36A" : status === "error" || status === "fork" ? "#E06B6B" : "#8A8F98";
+    const c = status === "ok" ? "#c4845a" : status === "error" || status === "fork" ? "#c0603a" : "#9c8374";
     const arrows = status === "syncing"
       ? '<path d="M9.5 13.5l2.5-2.5 2.5 2.5"/>'
       : status === "ok" ? '<path d="M9.5 12.5l1.8 1.8 3.4-3.6"/>' : "";
@@ -1648,7 +1652,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "30";
+const APP_VERSION = "31";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
