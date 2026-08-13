@@ -1054,7 +1054,11 @@ document.addEventListener("click", async (e) => {
     SEARCH_OPEN = !SEARCH_OPEN;
     if (!SEARCH_OPEN) SEARCH = "";
     render();
-    if (SEARCH_OPEN) { const el = document.getElementById("card-search"); if (el) el.focus(); }
+    if (SEARCH_OPEN) {
+      searchOpenedAt = Date.now();
+      const el = document.getElementById("card-search");
+      if (el) el.focus();
+    }
     return;
   }
   if (t.id === "sync-close") return closeSync();
@@ -1382,22 +1386,33 @@ function closeSearch() {
 }
 
 // focusout says where focus went, but not on iOS, where relatedTarget is null
-// for anything unfocusable. What was touched is the reliable signal.
-let lastPointerTarget = null;
-document.addEventListener("pointerdown", (e) => { lastPointerTarget = e.target; }, true);
+// for anything unfocusable. What was touched is the reliable signal — provided
+// it is checked for freshness, since the tap that opened the field is also a
+// tap on the magnifier, and left standing it would suppress every later close.
+let lastPointerTarget = null, lastPointerAt = 0;
+document.addEventListener("pointerdown", (e) => {
+  lastPointerTarget = e.target;
+  lastPointerAt = Date.now();
+}, true);
 
 document.addEventListener("focusout", (e) => {
   if (!e.target || e.target.id !== "card-search") return;
   if (SEARCH.trim()) return;
   // The magnifier already toggles; closing here as well would cancel it out.
+  // A tap-driven blur lands within milliseconds, so anything older isn't one.
   const p = lastPointerTarget;
-  if (p && p.closest && p.closest("[data-searchtoggle]")) return;
+  if (p && Date.now() - lastPointerAt < 500 && p.closest && p.closest("[data-searchtoggle]")) return;
   /* Deferred past the tap that caused it. Removing the row shifts the list up,
      and doing that between finger-down and click would move the target out
      from under a tap aimed at a card. */
   setTimeout(() => {
     const box = document.getElementById("card-search");
-    if (!box || document.activeElement === box || SEARCH.trim()) return;
+    // Only a field that got focus straight back is left alone. A missing field
+    // means the view changed under us — opening a card, say — and the state
+    // still has to be cleared, or coming back re-renders a bar nobody asked
+    // for and the magnifier closes it instead of opening it.
+    if (box && document.activeElement === box) return;
+    if (SEARCH.trim()) return;
     closeSearch();
   }, 220);
 });
@@ -1408,6 +1423,25 @@ document.addEventListener("keydown", (e) => {
   closeSearch();
   if (wasFiltering) renderCards();  // the filter is gone; show everything again
 });
+
+/* Scrolling the list is as clear a statement as tapping away, but scrolling
+   doesn't blur an input on iOS — so the keyboard stayed up over the cards with
+   an empty field above them and no way to be rid of either. Dropping focus here
+   dismisses the keyboard and hands the rest to the focusout rule above: empty,
+   the field folds away; mid-query, it stays and only the keyboard goes.
+
+   Scroll events are captured because they don't bubble, and #card-scroll is
+   rebuilt on every render, so there is nothing stable to bind to directly. */
+let searchOpenedAt = 0;
+document.addEventListener("scroll", (e) => {
+  if (!SEARCH_OPEN) return;
+  const sc = e.target;
+  if (!sc || sc.id !== "card-scroll") return;
+  // Focusing a field makes iOS scroll it into view; that scroll isn't the user.
+  if (Date.now() - searchOpenedAt < 600) return;
+  const box = document.getElementById("card-search");
+  if (box && document.activeElement === box) box.blur();
+}, true);
 
 // submit password on Enter
 document.addEventListener("keydown", (e) => {
@@ -1536,7 +1570,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "37";
+const APP_VERSION = "38";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
