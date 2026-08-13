@@ -924,14 +924,15 @@ function viewForm(editId) {
       <label class="fld">
         <span class="fld-h">Card number
           ${canScan() ? `<button type="button" class="scan-btn" id="f-scan">${I.camera} Scan</button>` : ""}</span>
-        <input id="f-number" class="mono" inputmode="numeric" autocomplete="cc-number" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/>
-        <div class="hint" id="f-scan-hint" hidden>Tap <b>Scan Credit Card</b> on the bar just above the keyboard.</div>
+        <input id="f-number" name="cardnumber" class="mono" ${canScan() ? "" : 'inputmode="numeric"'}
+               pattern="[0-9 ]{13,23}" autocomplete="cc-number" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/>
+        <div class="hint" id="f-scan-hint" hidden></div>
       </label>
       <div class="split">
-        <label class="fld"><span>Expiry</span><input id="f-expiry" class="mono" autocomplete="cc-exp" value="${c ? esc(c.expiry) : ""}" placeholder="MM/YY"/></label>
-        <label class="fld"><span>CVV</span><input id="f-cvv" class="mono" inputmode="numeric" autocomplete="cc-csc" value="${c ? esc(c.cvv) : ""}" placeholder="•••"/></label>
+        <label class="fld"><span>Expiry</span><input id="f-expiry" name="cc-exp" class="mono" autocomplete="cc-exp" value="${c ? esc(c.expiry) : ""}" placeholder="MM/YY"/></label>
+        <label class="fld"><span>CVV</span><input id="f-cvv" name="cvc" class="mono" inputmode="numeric" autocomplete="cc-csc" value="${c ? esc(c.cvv) : ""}" placeholder="•••"/></label>
       </div>
-      <label class="fld"><span>Cardholder</span><input id="f-name" autocomplete="cc-name" value="${c ? esc(c.name) : ""}" placeholder="Name on card"/></label>
+      <label class="fld"><span>Cardholder</span><input id="f-name" name="ccname" autocomplete="cc-name" value="${c ? esc(c.name) : ""}" placeholder="Name on card"/></label>
       <label class="fld"><span>Notes</span><textarea id="f-notes" rows="2" placeholder="Anything else worth remembering">${c ? esc(c.notes) : ""}</textarea></label>
       <div class="split">
         <div class="toggle ${c && c.favourite ? "on" : ""}" data-t="fav"><span>Favourite</span><div class="sw"><div class="knob"></div></div></div>
@@ -1308,20 +1309,34 @@ document.addEventListener("input", (e) => {
   numberDigits = digits;
   if (!scanned) return;
   const hint = document.getElementById("f-scan-hint");
-  if (hint) hint.hidden = true;               // it arrived; stop pointing at the bar
+  if (hint) { hint.hidden = true; clearTimeout(scanHintTimer); }  // it arrived
   const cvv = document.getElementById("f-cvv");
   if (cvv && !cvv.value) setTimeout(() => { if (!cvv.value) cvv.focus(); }, 300);
 });
 
 /* All this can do is focus the field — the scanner belongs to iOS and appears
-   in the keyboard bar, which is exactly the part people never think to look at. */
+   in the keyboard bar, which is exactly the part people never think to look at.
+   Whether it appears at all is Apple's call: the offer is withheld when card
+   AutoFill is switched off, so the hint escalates to that after a few seconds
+   of nothing arriving rather than leaving you staring at an empty bar. */
+let scanHintTimer = null;
 document.addEventListener("click", (e) => {
   const b = e.target.closest && e.target.closest("#f-scan");
   if (!b) return;
   e.preventDefault();
   const n = document.getElementById("f-number");
   const hint = document.getElementById("f-scan-hint");
-  if (hint) hint.hidden = false;
+  if (hint) {
+    hint.innerHTML = "Tap <b>Scan Credit Card</b> on the bar just above the keyboard.";
+    hint.hidden = false;
+    clearTimeout(scanHintTimer);
+    scanHintTimer = setTimeout(() => {
+      if (hint.hidden) return;
+      hint.innerHTML = "No <b>Scan Credit Card</b> on the bar? Switch on " +
+        "<b>Settings &rsaquo; Safari &rsaquo; AutoFill &rsaquo; Credit Cards</b>, then come back. " +
+        "The scanner is Apple's, so the app can't offer it any other way.";
+    }, 5000);
+  }
   if (n) { n.focus(); n.click(); }
 });
 document.addEventListener("change", (e) => {
@@ -1465,7 +1480,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "35";
+const APP_VERSION = "36";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 

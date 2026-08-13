@@ -76,7 +76,14 @@ Off until you configure it. Fill in `sync-config.js` (it documents each step) wi
 
 The form is sized to fit an iPhone screen without scrolling, down to an SE, with the iOS safe areas accounted for — Network and Sub-type share a row, and the padding is trimmed rather than the type, since anything under 16px makes Safari zoom the page in on focus.
 
-**Scanning is Apple's, and it lives in the keyboard bar.** Because the number field is marked `autocomplete="cc-number"`, focusing it puts **Scan Credit Card** in the QuickType strip directly above the keyboard; the camera then runs entirely on-device and fills the number, expiry and cardholder name. A web page cannot open that scanner itself — there is no API for it — so the **Scan** button beside the *Card number* label does the only thing available: it focuses the field and says where to look. It appears on iOS and iPadOS only, since no other platform makes the offer. If the strip doesn't show it, credit-card AutoFill is switched off in Settings → General → AutoFill & Passwords.
+**Scanning is Apple's, and it lives in the keyboard bar.** Because the number field is marked `autocomplete="cc-number"`, focusing it puts **Scan Credit Card** in the QuickType strip directly above the keyboard; the camera then runs entirely on-device and fills the number, expiry and cardholder name. A web page cannot open that scanner itself — there is no API for it — so the **Scan** button beside the *Card number* label does the only thing available: it focuses the field and says where to look. It appears on iOS and iPadOS only, since no other platform makes the offer.
+
+**Getting Safari to make the offer** took two changes, because Apple documents none of the heuristics:
+
+- **No `inputmode="numeric"` on iOS.** It forces the numeric keypad, whose accessory bar carries only prev/next/done — there is nowhere for an AutoFill offer to appear, so the scanner is silently unreachable. The attribute is therefore dropped on iOS and kept everywhere else, trading a slightly less convenient keyboard for a scanner that exists. The CVV keeps its keypad; nothing scans into it anyway.
+- **Conventional `name` attributes.** Safari's card detection reads `name`/`id`/label text, and ids like `f-number` match nothing it looks for. The fields now also carry `cardnumber`, `cc-exp`, `cvc` and `ccname`.
+
+If the offer still doesn't appear, card AutoFill is switched off — *Settings › Safari › AutoFill › Credit Cards*. The hint under the field says so on its own after a few seconds of nothing arriving.
 
 The network is then detected from the card's leading digits and selected for you; picking one yourself always wins, and editing an existing card never rewrites its stored network.
 
