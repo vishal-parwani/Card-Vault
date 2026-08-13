@@ -489,6 +489,11 @@ const GRADIENTS = {
 const NETWORKS = Object.keys(GRADIENTS);
 function gradientFor(network) { return GRADIENTS[network] || GRADIENTS.Other; }
 
+// "Visa · Infinite" when a sub-type is set, otherwise just the network.
+function networkLine(c) {
+  return c.subtype ? `${c.network} · ${c.subtype}` : c.network;
+}
+
 /* Issuer network from the card number's leading digits. Only the network
    family is knowable offline — the product tier (Platinum, Infinite, …) lives
    in an issuer database, so it is never guessed here. Returns null rather than
@@ -546,145 +551,7 @@ function maskNum(num) {
 function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
-/* ---------- LastPass import ----------
-   LastPass exports payment cards as secure notes: one CSV row per item, with
-   the card fields packed as "Key:value" lines inside the quoted `extra`
-   column. Parsing happens entirely in this page — the CSV is never uploaded.
-*/
-
-// Full RFC4180-ish parse: fields may be quoted and contain commas, newlines
-// and doubled quotes, all of which LastPass emits.
-function parseCSV(text) {
-  const rows = [];
-  let row = [], field = "", inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; }
-        else inQuotes = false;
-      } else field += ch;
-      continue;
-    }
-    if (ch === '"') { inQuotes = true; continue; }
-    if (ch === ",") { row.push(field); field = ""; continue; }
-    if (ch === "\n") { row.push(field); rows.push(row); row = []; field = ""; continue; }
-    if (ch === "\r") continue;
-    field += ch;
-  }
-  if (field !== "" || row.length) { row.push(field); rows.push(row); }
-  return rows;
-}
-
-const LP_MONTHS = {
-  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
-};
-
-// LastPass writes "January,2029" (or "01,2029"); empty is ",".
-function lpExpiry(raw) {
-  const parts = String(raw || "").split(",").map((x) => x.trim());
-  if (parts.length < 2) return "";
-  const [m, y] = parts;
-  if (!m || !y) return "";
-  const mm = LP_MONTHS[m.toLowerCase()] || parseInt(m, 10);
-  if (!mm || mm < 1 || mm > 12) return "";
-  return String(mm).padStart(2, "0") + "/" + String(y).trim().slice(-2);
-}
-
-function lpNetwork(type, number) {
-  const t = String(type || "").toLowerCase();
-  if (t.includes("visa")) return "Visa";
-  if (t.includes("master")) return "Mastercard";
-  if (t.includes("amex") || t.includes("american")) return "American Express";
-  if (t.includes("diner")) return "Diners Club";
-  if (t.includes("rupay")) return "RuPay";
-  return detectNetwork(number) || "Other"; // fall back to the number itself
-}
-
-/* "Notes:" is the last key and its value runs to the end of the block, over as
-   many lines as the user wrote. Split there first, so a note containing
-   something like "Type: personal" can't be misread as a card field. */
-function lpSplit(extra) {
-  const s = String(extra || "");
-  const m = s.match(/(^|\n)Notes:/);
-  if (!m) return { head: s, notes: "" };
-  return { head: s.slice(0, m.index), notes: s.slice(m.index + m[0].length).trim() };
-}
-
-// Turn the "Key:value" block inside `extra` into a lookup.
-function lpFields(extra) {
-  const out = {};
-  for (const line of String(extra || "").split("\n")) {
-    const i = line.indexOf(":");
-    if (i < 1) continue;
-    out[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
-  }
-  return out;
-}
-
-/* LastPass files these under "Payment Cards" in its UI, but exports them as
-   secure notes. The note type has been spelled a few ways across versions, so
-   rather than rely on one label, also accept any entry carrying both a card
-   number and a security code — a shape nothing else in the export has. */
-function looksLikeCard(extra) {
-  const s = String(extra || "");
-  if (/notetype\s*:\s*(credit\s*card|payment\s*cards?|bank\s*card)/i.test(s)) return true;
-  return /(^|\n)\s*Number\s*:\s*[0-9 -]{8,}/i.test(s) &&
-         /(^|\n)\s*Security Code\s*:/i.test(s);
-}
-
-/* LastPass has no notion of an add-on/supplementary card, so it can only be
-   guessed from what the user wrote. A guess is safe here: it only preselects a
-   toggle that is one tap to correct. */
-function lpIsAddon(text) {
-  return /\b(add[- ]?on|addon|supplementary|supplementry|suppl)\b/i.test(text || "");
-}
-
-/* Returns { cards, skipped, total } — cards ready to merge, skipped counting
-   entries that duplicate a number already in the vault. */
-function parseLastPass(text, existing) {
-  const rows = parseCSV(text);
-  if (!rows.length) return { cards: [], skipped: 0, total: 0 };
-  const header = rows[0].map((h) => h.trim().toLowerCase());
-  const col = (n) => header.indexOf(n);
-  const iName = col("name"), iExtra = col("extra"), iFav = col("fav");
-  if (iExtra < 0) return { cards: [], skipped: 0, total: 0 };
-
-  const seen = new Set((existing || []).map((c) => String(c.number || "").replace(/\D/g, "")).filter(Boolean));
-  const cards = [];
-  let total = 0, skipped = 0;
-  const now = Date.now();
-
-  for (let r = 1; r < rows.length; r++) {
-    const extra = rows[r][iExtra] || "";
-    if (!looksLikeCard(extra)) continue;
-    total++;
-    const { head, notes } = lpSplit(extra);
-    const f = lpFields(head);
-    const number = (f["number"] || "").trim();
-    const digits = number.replace(/\D/g, "");
-    if (!digits) { skipped++; continue; }
-    if (seen.has(digits)) { skipped++; continue; }
-    seen.add(digits);
-    cards.push({
-      id: uid(),
-      label: (iName >= 0 && rows[r][iName]) || f["name on card"] || "Imported card",
-      network: lpNetwork(f["type"], number),
-      number,
-      expiry: lpExpiry(f["expiration date"]),
-      cvv: (f["security code"] || "").trim(),
-      name: (f["name on card"] || "").trim(),
-      notes,
-      favourite: iFav >= 0 && String(rows[r][iFav]).trim() === "1",
-      type: lpIsAddon(`${(iName >= 0 && rows[r][iName]) || ""} ${notes}`) ? "addon" : "primary",
-      accent: "#fff",
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
-  return { cards, skipped, total };
-}
+/* ---------- card status ---------- */
 
 /* A card is valid through the end of its expiry month. Unparseable or missing
    expiry counts as active — better to offer it than to hide it. */
@@ -695,123 +562,6 @@ function cardExpired(expiry, now = new Date()) {
   if (mm < 1 || mm > 12) return false;
   const yy = m[2].length === 2 ? 2000 + parseInt(m[2], 10) : parseInt(m[2], 10);
   return now >= new Date(yy, mm, 1); // first day of the month after expiry
-}
-
-/* Why a card shouldn't be imported by default — "" means it's fine. LastPass
-   has no active/closed flag, so this reads the expiry and any wording the user
-   left behind. It only unticks a box, so a wrong call costs one tap. */
-function importReason(c, now = new Date()) {
-  if (cardExpired(c.expiry, now)) return "expired " + c.expiry;
-  if (/\b(closed|cancell?ed|deactivated|inactive|blocked|surrendered|replaced)\b/i.test(`${c.label} ${c.notes || ""}`)) {
-    return "looks closed";
-  }
-  return "";
-}
-
-let PENDING_IMPORT = [];
-
-async function importLastPassFile(file) {
-  return importLastPassText(await file.text());
-}
-
-async function importLastPassText(text) {
-  const { cards, skipped, total } = parseLastPass(text, CARDS);
-  if (!total) {
-    alert("No payment cards found in that export.\n\nExport from the LastPass web vault on a computer (the phone app can't export): sidebar → Advanced Options → Export → LastPass CSV File.");
-    return;
-  }
-  if (!cards.length) {
-    toast(`Already have all ${skipped} card${skipped === 1 ? "" : "s"}`);
-    return;
-  }
-  PENDING_IMPORT = cards.map((c) => ({ ...c, reason: importReason(c) }));
-  showImportPicker(skipped);
-}
-
-// The summary line for one row, recomputed whenever its fields are edited.
-function pickSummary(c) {
-  return `${esc(c.network)} · ${esc(maskNum(c.number))}${c.expiry ? " · " + esc(c.expiry) : ""}` +
-         `${c.type === "addon" ? " · add-on" : ""}` +
-         `${c.reason ? ` · <span class="pick-warn">${esc(c.reason)}</span>` : ""}`;
-}
-
-function pickRowHTML(c, i) {
-  const netOpts = NETWORKS.map((n) => `<option ${c.network === n ? "selected" : ""}>${n}</option>`).join("");
-  return `
-  <div class="pick-item" data-item="${i}">
-    <div class="pick-row${c.reason ? " off" : ""}">
-      <input type="checkbox" data-pick="${i}" ${c.reason ? "" : "checked"} aria-label="Import this card" />
-      <span class="pick-body">
-        <span class="pick-main" data-main="${i}">${esc(c.label)}</span>
-        <span class="pick-sub" data-sub="${i}">${pickSummary(c)}</span>
-      </span>
-      <button class="pick-edit" data-editrow="${i}">Edit</button>
-    </div>
-    <div class="pick-form" data-form="${i}" hidden>
-      <label>Label<input data-f="label" data-i="${i}" value="${esc(c.label)}" /></label>
-      <label>Network<select data-f="network" data-i="${i}">${netOpts}</select></label>
-      <label>Card number<input class="mono" data-f="number" data-i="${i}" inputmode="numeric" value="${esc(c.number)}" /></label>
-      <div class="pick-split">
-        <label>Expiry<input class="mono" data-f="expiry" data-i="${i}" value="${esc(c.expiry)}" placeholder="MM/YY" /></label>
-        <label>CVV<input class="mono" data-f="cvv" data-i="${i}" inputmode="numeric" value="${esc(c.cvv)}" /></label>
-      </div>
-      <label>Cardholder<input data-f="name" data-i="${i}" value="${esc(c.name)}" /></label>
-      <label>Notes<textarea rows="2" data-f="notes" data-i="${i}">${esc(c.notes || "")}</textarea></label>
-      <label class="pick-check"><input type="checkbox" data-f="addon" data-i="${i}" ${c.type === "addon" ? "checked" : ""} /> Add-on card</label>
-    </div>
-  </div>`;
-}
-
-// Re-render just the summary of row i after an edit, including its reason.
-function refreshPickRow(i) {
-  const c = PENDING_IMPORT[i];
-  c.reason = importReason(c);
-  const main = document.querySelector(`[data-main="${i}"]`);
-  const sub = document.querySelector(`[data-sub="${i}"]`);
-  const row = document.querySelector(`[data-item="${i}"] .pick-row`);
-  if (main) main.textContent = c.label;
-  if (sub) sub.innerHTML = pickSummary(c);
-  if (row) row.classList.toggle("off", !!c.reason);
-}
-
-function showImportPicker(skipped) {
-  document.getElementById("import-list").innerHTML =
-    PENDING_IMPORT.map((c, i) => pickRowHTML(c, i)).join("");
-
-  const inactive = PENDING_IMPORT.filter((c) => c.reason).length;
-  document.getElementById("import-summary").textContent =
-    `Found ${PENDING_IMPORT.length} card${PENDING_IMPORT.length === 1 ? "" : "s"}` +
-    (skipped ? `, ${skipped} already in your vault` : "") +
-    (inactive ? `. ${inactive} look inactive and are unticked — tick any you still want.` : ".");
-
-  document.getElementById("import-choose").hidden = true;
-  document.getElementById("import-pick").hidden = false;
-  updateImportCount();
-}
-
-function pickedIndexes() {
-  return [...document.querySelectorAll("#import-list input[data-pick]")]
-    .filter((el) => el.checked).map((el) => Number(el.dataset.pick));
-}
-function updateImportCount() {
-  const n = pickedIndexes().length;
-  const btn = document.getElementById("import-commit");
-  btn.textContent = n ? `Import ${n} card${n === 1 ? "" : "s"}` : "Import";
-  btn.disabled = !n;
-}
-
-async function commitImport() {
-  const chosen = pickedIndexes().map((i) => {
-    const { reason, ...card } = PENDING_IMPORT[i]; // reason is UI-only
-    return card;
-  });
-  if (!chosen.length) return;
-  CARDS = CARDS.concat(chosen);
-  PENDING_IMPORT = [];
-  await saveVault();
-  closeImport();
-  render();
-  toast(`Imported ${chosen.length} card${chosen.length === 1 ? "" : "s"}`);
 }
 
 /* ---------- SVG icons ---------- */
@@ -825,6 +575,7 @@ const I = {
   eye: (on) => `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.7"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
   eyeD: (on) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.6"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/>${on ? '<circle cx="12" cy="12" r="3"/>' : '<line x1="3" y1="3" x2="21" y2="21"/>'}</svg>`,
   star: (on) => `<svg width="15" height="15" viewBox="0 0 24 24" fill="${on ? "#c4845a" : "none"}" stroke="${on ? "#c4845a" : "rgba(255,255,255,0.7)"}" stroke-width="1.6"><path d="M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 17.8 5.9 20.4l1.4-6.8L2.2 9.1l6.9-.8L12 2z"/></svg>`,
+  gear: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 8.6a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   back: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>`,
   caret: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>`,
   search: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>`,
@@ -849,6 +600,8 @@ function toast(msg) {
 /* ---------- rendering ---------- */
 const app = () => document.getElementById("app");
 let VIEW = { name: "boot", cardId: null };
+let SEARCH = "";          // current query; "" means show everything
+let SEARCH_OPEN = false;  // the field only exists once the search icon is tapped
 
 function go(name, cardId = null) { VIEW = { name, cardId }; render(); reassertUpdateBar(); }
 
@@ -908,16 +661,52 @@ function renderSyncSheet() {
     : "Add your CloudKit container and API token to sync-config.js, then redeploy. Until then the vault stays on this device only.");
 }
 
-function openImport() {
-  PENDING_IMPORT = [];
-  document.getElementById("import-pick").hidden = true;
-  document.getElementById("import-choose").hidden = false;
-  document.getElementById("import-sheet").hidden = false;
+
+/* Shared by the card-list prompt and the settings sheet. enableFaceId() links
+   an existing passkey when this device can use one, and enrols a new one only
+   when it cannot. */
+async function enrolFaceId() {
+    try {
+      const how = await enableFaceId();
+      try { localStorage.removeItem(FACE_DISMISS_KEY); } catch {}
+      scheduleSync();
+      toast(how === "linked" ? "Face ID linked" : "Face ID enabled");
+      render();
+    } catch (ex) {
+      alert("Couldn't set up Face ID on this device.\n\n" + ((ex && ex.message) || ex));
+    }
 }
-function closeImport() {
-  const sheet = document.getElementById("import-sheet");
-  if (sheet) sheet.hidden = true;
+
+/* An archived card keeps every detail — it just moves out of the main list, with
+   the reason recorded so a year later you know why it went. */
+const ARCHIVE_REASONS = ["Expired", "Cancelled by me", "Closed by issuer", "Lost or stolen", "Replaced", "Other"];
+const isArchived = (c) => !!(c && c.archived);
+
+let ARCHIVE_TARGET = null;
+function openArchive() {
+  const list = document.getElementById("archive-reasons");
+  list.innerHTML = ARCHIVE_REASONS.map((r) => `<button class="btn-ghost" data-reason="${esc(r)}">${esc(r)}</button>`).join("");
+  document.getElementById("archive-sheet").hidden = false;
 }
+function closeArchive() {
+  ARCHIVE_TARGET = null;
+  document.getElementById("archive-sheet").hidden = true;
+}
+
+function openSettings() {
+  const face = document.getElementById("settings-face");
+  const note = document.getElementById("settings-face-note");
+  // Enrolment is only worth offering when this device has no passkey of its own.
+  const canEnrol = prfSupportedUA() && !faceIdIsLocal();
+  face.hidden = !canEnrol;
+  face.textContent = META && META.prf ? "Link Face ID from your other device" : "Set up Face ID";
+  note.textContent = canEnrol ? "" : (prfSupportedUA()
+    ? "Face ID is set up on this device."
+    : "Face ID isn't available in this browser.");
+  document.getElementById("settings-version").textContent = "Version " + APP_VERSION;
+  document.getElementById("settings-sheet").hidden = false;
+}
+function closeSettings() { document.getElementById("settings-sheet").hidden = true; }
 
 function openSync() {
   SHEET_OPEN = true;
@@ -934,18 +723,19 @@ function closeSync() {
 
 function cardFaceSmall(c) {
   return `
-  <div class="card" style="background:${gradientFor(c.network)}" data-open="${c.id}">
+  <div class="card${isArchived(c) ? " archived" : ""}" style="background:${gradientFor(c.network)}" data-open="${c.id}">
     <div class="sheen"></div>
     <div class="top">
-      <div><div class="label">${esc(c.label)}</div><div class="network">${esc(c.network)}</div></div>
-      <button class="star-btn" data-fav="${c.id}">${I.star(c.favourite)}</button>
+      <div><div class="label">${esc(c.label)}</div>
+        <div class="network">${esc(networkLine(c))}${isArchived(c) ? ` · ${esc(c.archived.reason)}` : ""}</div></div>
+      <div class="topacts">
+        <button class="oncard-btn" data-reveal="${c.id}" aria-label="Show number and CVV">${I.eye(false)}</button>
+        <button class="star-btn" data-fav="${c.id}">${I.star(c.favourite)}</button>
+      </div>
     </div>
     <div class="numrow">
       <span class="num" style="color:${c.accent || "#fff"}" data-listnum="${c.id}">${maskNum(c.number)}</span>
-      <div class="numacts">
-        <button class="oncard-btn" data-reveal="${c.id}" aria-label="Show number and CVV">${I.eye(false)}</button>
-        <button class="oncard-btn" data-copy="number" data-id="${c.id}">${I.copy}</button>
-      </div>
+      <button class="oncard-btn" data-copy="number" data-id="${c.id}">${I.copy}</button>
     </div>
     <div class="metarow">
       <div class="field"><span class="k">EXP</span><span class="v">${esc(c.expiry)}</span>
@@ -955,9 +745,6 @@ function cardFaceSmall(c) {
     </div>
   </div>`;
 }
-
-/* ---------- list: search, collapsing, manual order ---------- */
-let SEARCH = "";
 
 /* Which sections are folded away is a per-device view preference, not vault
    content, so it lives in localStorage and never syncs. */
@@ -1009,9 +796,13 @@ function cardsHtml() {
   const q = SEARCH.trim().toLowerCase();
   const hits = CARDS.filter((c) => matchesSearch(c, q));
   if (!hits.length) return `<div class="empty">Nothing matches “${esc(SEARCH.trim())}”.</div>`;
-  return section("fav", "Favourites", hits.filter((c) => c.favourite).sort(bySortOrder))
-    + section("prim", "Your cards", hits.filter((c) => !c.favourite && c.type !== "addon").sort(bySortOrder))
-    + section("addon", "Add-on cards", hits.filter((c) => !c.favourite && c.type === "addon").sort(bySortOrder));
+  // Archived cards drop out of the ordinary groupings into their own section.
+  const live = hits.filter((c) => !isArchived(c));
+  const gone = hits.filter(isArchived).sort(bySortOrder);
+  return section("fav", "Favourites", live.filter((c) => c.favourite).sort(bySortOrder))
+    + section("prim", "Your cards", live.filter((c) => !c.favourite && c.type !== "addon").sort(bySortOrder))
+    + section("addon", "Add-on cards", live.filter((c) => !c.favourite && c.type === "addon").sort(bySortOrder))
+    + section("archived", "Archived", gone);
 }
 
 /* Repaints just the cards. Typing must not re-render the header, or the search
@@ -1025,7 +816,11 @@ function renderCards() {
 
 function listMeta() {
   const q = SEARCH.trim().toLowerCase();
-  if (!q) return `${CARDS.length} saved · offline ready`;
+  if (!q) {
+    const live = CARDS.filter((c) => !isArchived(c)).length;
+    const gone = CARDS.length - live;
+    return `${live} saved${gone ? ` · ${gone} archived` : ""} · offline ready`;
+  }
   const n = CARDS.filter((c) => matchesSearch(c, q)).length;
   return `${n} of ${CARDS.length} shown`;
 }
@@ -1042,8 +837,9 @@ function viewList() {
       <div><h1>Cards</h1><div class="meta" id="list-meta">${listMeta()}</div></div>
       <div class="hgroup">
         <button class="icon-btn" data-add aria-label="Add card"><span class="plus">+</span></button>
-        <button class="icon-btn" data-sync>${I.cloud(SYNC.status)}</button>
-        <button class="icon-btn" data-lock>${I.lockSm}</button>
+        <button class="icon-btn" data-searchtoggle aria-label="Search">${I.search}</button>
+        <button class="icon-btn" data-settings aria-label="Settings">${I.gear}</button>
+        <button class="icon-btn" data-lock aria-label="Lock">${I.lockSm}</button>
       </div>
     </div>
     ${showFaceBanner() ? `
@@ -1059,7 +855,7 @@ function viewList() {
           <button class="link" data-facedismiss>Not now</button>
         </div>
       </div>` : ""}
-    ${CARDS.length ? `
+    ${CARDS.length && SEARCH_OPEN ? `
       <div class="search-wrap">
         <span class="search-i">${I.search}</span>
         <input id="card-search" type="search" placeholder="Search cards" value="${esc(SEARCH)}"
@@ -1067,10 +863,7 @@ function viewList() {
         <button class="search-x" id="search-clear" aria-label="Clear search" ${SEARCH ? "" : "hidden"}>&times;</button>
       </div>` : ""}
     <div class="scroll" id="card-scroll">${cardsHtml()}</div>
-    <div class="list-links">
-      <button class="link" data-import>Import from LastPass</button>
-      ${prfSupportedUA() && !showFaceBanner() ? `<button class="link" data-facesetup>${faceIdIsLocal() ? "Re-enrol" : "Set up"} Face ID here</button>` : ""}
-    </div>`;
+`;
 }
 
 function viewDetail() {
@@ -1080,7 +873,7 @@ function viewDetail() {
     <button class="back" data-back>${I.back} Cards</button>
     <div class="card big" style="background:${gradientFor(c.network)}">
       <div class="sheen"></div>
-      <div class="top"><div><div class="label">${esc(c.label)}</div><div class="network">${esc(c.network)}</div></div><div class="chip"></div></div>
+      <div class="top"><div><div class="label">${esc(c.label)}</div><div class="network">${esc(networkLine(c))}</div></div><div class="chip"></div></div>
       <div class="num big" style="color:${c.accent || "#fff"}" data-num>${esc(groupNum(c.number))}</div>
       <div class="bottom"><div class="v">${esc(c.name)}</div><div class="v">${esc(c.expiry)}</div></div>
     </div>
@@ -1093,7 +886,9 @@ function viewDetail() {
         <div class="acts"><button class="icon-btn" data-toggle="cvv">${I.eyeD(true)}</button><button class="icon-btn" data-copy="cvv" data-id="${c.id}">${I.copyGold}</button></div></div>
       <div class="row"><div><div class="k">Cardholder</div><div class="v">${esc(c.name)}</div></div></div>
       ${c.notes ? `<div class="row"><div><div class="k">Notes</div><div class="v notes">${esc(c.notes)}</div></div></div>` : ""}
-      <div class="row" style="border:none"><button class="link" data-edit="${c.id}">Edit</button>
+      ${isArchived(c) ? `<div class="row"><div><div class="k">Archived</div><div class="v" style="font-family:var(--sans);font-size:14px">${esc(c.archived.reason)} · ${new Date(c.archived.at).toLocaleDateString()}</div></div></div>` : ""}
+      <div class="row" style="border:none;flex-wrap:wrap;gap:10px"><button class="link" data-edit="${c.id}">Edit</button>
+        <button class="link" data-archive="${c.id}">${isArchived(c) ? "Restore to my cards" : "Archive card"}</button>
         <button class="link danger" data-del="${c.id}">Delete card</button></div>
     </div>`;
 }
@@ -1109,6 +904,7 @@ function viewForm(editId) {
       <label class="fld"><span>Card label</span><input id="f-label" autocomplete="off" value="${c ? esc(c.label) : ""}" placeholder="e.g. HDFC Infinia"/></label>
       <label class="fld"><span>Network</span>
         <select id="f-network" ${c ? 'data-touched="1"' : ""} style="background:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:13px 15px;color:var(--txt);font-family:var(--sans);font-size:16px;">${netOpts}</select></label>
+      <label class="fld"><span>Sub-type</span><input id="f-subtype" value="${c ? esc(c.subtype || "") : ""}" placeholder="e.g. Infinite, Platinum, Magnus"/></label>
       <label class="fld"><span>Card number</span><input id="f-number" class="mono" inputmode="numeric" autocomplete="cc-number" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/></label>
       <div class="split">
         <label class="fld"><span>Expiry</span><input id="f-expiry" class="mono" autocomplete="cc-exp" value="${c ? esc(c.expiry) : ""}" placeholder="MM/YY"/></label>
@@ -1188,7 +984,7 @@ function render() {
 
 /* ---------- event delegation ---------- */
 document.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-reveal],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-del],[data-t],[data-save],[data-sync],[data-new],[data-welcome],[data-restore],[data-import],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#import-close,#import-file-btn,#import-paste-go,#import-commit,#import-back,#import-all,#import-none,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#update-reload,#update-dismiss,[data-collapse],#search-clear");
+  const t = e.target.closest("[data-open],[data-fav],[data-copy],[data-reveal],[data-lock],[data-add],[data-back],[data-toggle],[data-edit],[data-archive],[data-del],[data-t],[data-save],[data-sync],[data-settings],[data-searchtoggle],[data-new],[data-welcome],[data-restore],[data-facesetup],[data-facedismiss],[data-editrow],#s-create,#u-face,#u-usepw,#u-pw-go,#sync-close,#sync-now,#sync-restore,#sync-take-cloud,#sync-take-local,#sync-wipe-cloud,#sync-wipe-local,#sync-diag-copy,#sync-selftest,#ck-signin,#ck-signout,#settings-close,#settings-sync,#settings-face,#archive-close,[data-reason],#update-reload,#update-dismiss,[data-collapse],#search-clear");
   if (!t) return;
 
   if (t.id === "update-reload") { t.disabled = true; t.textContent = "Reloading…"; return applyUpdate(); }
@@ -1205,6 +1001,28 @@ document.addEventListener("click", async (e) => {
 
   /* ----- sync sheet ----- */
   if (t.hasAttribute("data-sync")) return openSync();
+  if (t.hasAttribute("data-settings")) return openSettings();
+  if (t.id === "archive-close") return closeArchive();
+  if (t.dataset.reason) {
+    const c = CARDS.find((x) => x.id === ARCHIVE_TARGET);
+    if (!c) return closeArchive();
+    c.archived = { at: Date.now(), reason: t.dataset.reason };
+    c.updatedAt = Date.now();
+    await saveVault();
+    closeArchive();
+    toast("Archived");
+    return go("list");
+  }
+  if (t.id === "settings-close") return closeSettings();
+  if (t.id === "settings-sync") { closeSettings(); return openSync(); }
+  if (t.id === "settings-face") { closeSettings(); return enrolFaceId(); }
+  if (t.hasAttribute("data-searchtoggle")) {
+    SEARCH_OPEN = !SEARCH_OPEN;
+    if (!SEARCH_OPEN) SEARCH = "";
+    render();
+    if (SEARCH_OPEN) { const el = document.getElementById("card-search"); if (el) el.focus(); }
+    return;
+  }
   if (t.id === "sync-close") return closeSync();
   if (t.id === "sync-now") return void syncNow();
   if (t.id === "sync-restore" || t.id === "sync-take-cloud") {
@@ -1322,53 +1140,29 @@ document.addEventListener("click", async (e) => {
     return;
   }
   if (t.hasAttribute("data-add")) return go("add");
-  if (t.hasAttribute("data-import")) return openImport();
   if (t.hasAttribute("data-facedismiss")) {
     try { localStorage.setItem(FACE_DISMISS_KEY, "1"); } catch {}
     return render();
   }
-  if (t.hasAttribute("data-facesetup")) {
-    try {
-      const how = await enableFaceId();
-      try { localStorage.removeItem(FACE_DISMISS_KEY); } catch {}
-      scheduleSync();
-      toast(how === "linked" ? "Face ID linked" : "Face ID enabled");
-      render();
-    } catch (ex) {
-      alert("Couldn't set up Face ID on this device.\n\n" + ((ex && ex.message) || ex));
-    }
-    return;
-  }
-  if (t.id === "import-close") return closeImport();
-  if (t.id === "import-file-btn") return document.getElementById("lp-file").click();
-  if (t.dataset.editrow !== undefined) {
-    const form = document.querySelector(`[data-form="${t.dataset.editrow}"]`);
-    form.hidden = !form.hidden;
-    t.textContent = form.hidden ? "Edit" : "Done";
-    return;
-  }
-  if (t.id === "import-commit") return commitImport();
-  if (t.id === "import-back") {
-    PENDING_IMPORT = [];
-    document.getElementById("import-pick").hidden = true;
-    document.getElementById("import-choose").hidden = false;
-    return;
-  }
-  if (t.id === "import-all" || t.id === "import-none") {
-    const on = t.id === "import-all";
-    document.querySelectorAll("#import-list input[data-pick]").forEach((el) => { el.checked = on; });
-    return updateImportCount();
-  }
-  if (t.id === "import-paste-go") {
-    const box = document.getElementById("import-text");
-    const text = box.value.trim();
-    if (!text) { toast("Paste the export text first"); return; }
-    try { await importLastPassText(text); box.value = ""; }
-    catch (ex) { alert("Couldn't read that text: " + ((ex && ex.message) || ex)); }
-    return;
-  }
+  if (t.hasAttribute("data-facesetup")) return enrolFaceId();
   if (t.hasAttribute("data-back")) return go(DEK && VIEW.name !== "list" ? "list" : "list");
   if (t.dataset.edit) return go("edit", t.dataset.edit);
+
+  /* Archiving asks why: months later, "cancelled" and "expired" mean very
+     different things when a charge shows up against a card you no longer hold. */
+  if (t.dataset.archive) {
+    const c = CARDS.find((x) => x.id === t.dataset.archive);
+    if (!c) return;
+    if (isArchived(c)) {
+      c.archived = null;
+      c.updatedAt = Date.now();
+      await saveVault();
+      toast("Restored");
+      return go("detail", c.id);
+    }
+    ARCHIVE_TARGET = c.id;
+    return openArchive();
+  }
 
   // detail reveal toggles
   if (t.dataset.toggle) {
@@ -1410,7 +1204,7 @@ document.addEventListener("click", async (e) => {
     const now = Date.now();
     const rec = {
       id: t.dataset.save || uid(),
-      label, network: document.getElementById("f-network").value,
+      label, network: document.getElementById("f-network").value, subtype: g("f-subtype"),
       number, expiry: g("f-expiry"), cvv: g("f-cvv"), name: g("f-name"), notes: g("f-notes"),
       favourite: document.querySelector('[data-t="fav"]').classList.contains("on"),
       type: document.querySelector('[data-t="addon"]').classList.contains("on") ? "addon" : "primary",
@@ -1495,25 +1289,9 @@ document.addEventListener("input", (e) => {
   const cvv = document.getElementById("f-cvv");
   if (cvv && !cvv.value) setTimeout(() => { if (!cvv.value) cvv.focus(); }, 300);
 });
-function applyPickEdit(el) {
-  const i = Number(el.dataset.i);
-  const c = PENDING_IMPORT[i];
-  if (!c) return;
-  const f = el.dataset.f;
-  if (f === "addon") c.type = el.checked ? "addon" : "primary";
-  else c[f] = el.value;
-  c.updatedAt = Date.now();
-  refreshPickRow(i);
-}
-
 document.addEventListener("change", (e) => {
   if (!e.target) return;
   if (e.target.id === "f-network") e.target.dataset.touched = "1";
-  if (e.target.matches("#import-list input[data-pick]")) updateImportCount();
-  if (e.target.matches("[data-f][data-i]")) applyPickEdit(e.target);
-});
-document.addEventListener("input", (e) => {
-  if (e.target && e.target.matches("[data-f][data-i]")) applyPickEdit(e.target);
 });
 
 /* Filters as you type. Only the card area is repainted — see renderCards. */
@@ -1652,7 +1430,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "33";
+const APP_VERSION = "34";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
@@ -1835,14 +1613,6 @@ document.addEventListener("visibilitychange", () => {
   if (DEK && away >= LOCK_GRACE_MS) lock();
   gateAutoFaceId();
   checkForUpdate();
-});
-
-document.addEventListener("change", async (e) => {
-  if (!e.target || e.target.id !== "lp-file" || !e.target.files.length) return;
-  const file = e.target.files[0];
-  e.target.value = ""; // let the same file be picked again after a failed run
-  try { await importLastPassFile(file); }
-  catch (ex) { alert("Couldn't read that file: " + ((ex && ex.message) || ex)); }
 });
 
 window.addEventListener("online", () => scheduleSync());

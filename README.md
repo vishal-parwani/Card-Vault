@@ -42,7 +42,7 @@ Opening a card shows **everything unmasked** — number and CVV included — sin
 
 ## Finding and arranging cards
 
-**Search** filters as you type, across every field you can see: label, network, cardholder, notes, expiry and number. The number is matched on digits alone as well, so `4111 1111` finds a card stored unspaced and `41111111` finds a grouped one. Only the card area repaints on each keystroke — re-rendering the header would replace the field under the cursor and lose focus on every letter.
+**Search** lives behind the magnifier in the header — tap it and the field appears, tap it again and it folds away along with whatever you'd typed. It filters as you type, across every field you can see: label, network, cardholder, notes, expiry and number. The number is matched on digits alone as well, so `4111 1111` finds a card stored unspaced and `41111111` finds a grouped one. Only the card area repaints on each keystroke — re-rendering the header would replace the field under the cursor and lose focus on every letter.
 
 **Sections collapse.** Tap *Favourites*, *Your cards* or *Add-on cards* to fold one away; the count stays visible in the header. Which ones are folded is a per-device view preference, so it lives in `localStorage` and never syncs. Searching ignores collapsing — a filtered list is no place to hide matches — and the folds come back when the search is cleared.
 
@@ -84,21 +84,15 @@ What scanning can't give you, and why:
 - **CVV** is never returned by Apple's scanner, regardless of where it is printed on the card — the scanner emits only number, expiry and cardholder name, and Safari's own card autofill likewise never stores a CVV. Newer cards that print the CVV beside the number make no difference. Type it.
 - **Bank and product tier** (say "HDFC Infinia" or "Visa Infinite") aren't derivable offline. Only the network *family* is in the leading digits — Visa Platinum and Visa Infinite both begin with `4`. Resolving the tier needs an issuer (BIN) database: an online lookup would send part of your card number to a third party, and a bundled table would be stale and confidently wrong on exactly the cards that matter. So the label stays a field you type once.
 
-## Importing from LastPass
+## Archiving a card
 
-Export is available on LastPass Free, but only from the **web vault on a computer** — the iOS/Android apps have no export. Sign in at the web vault, expand the left sidebar, then **Advanced Options → Export → LastPass CSV File**, and re-enter your master password when prompted.
+A card you've cancelled, or one that has expired, doesn't need deleting — open it and tap **Archive card**, then pick a reason: expired, cancelled by me, closed by issuer, lost or stolen, replaced, or other. The card keeps every detail it had and moves into its own **Archived** section at the bottom of the list, drawn desaturated with the reason beside the network. The count under the header separates the two, so *8 saved · 3 archived* tells you what's actually live.
 
-In Card Vault, tap **Import from LastPass** under the Add card button. LastPass either downloads a `.csv` or prints the export as text in the browser, so the sheet takes both: pick the file, or paste the text straight in.
+Archiving is reversible from the same screen (**Restore to my cards**), and the archive state carries `updatedAt` like any other edit, so it merges across devices rather than being a per-device view setting.
 
-Nothing imports blind: the export is parsed and every card it found is listed for you to review. Tick the ones to keep, skip the rest, and hit **Edit** on any row to correct it — label, network, number, expiry, CVV, cardholder, notes and the add-on flag — before it reaches the vault.
+## Settings
 
-Cards that look inactive start **unticked**, with the reason shown: expired ones (from the expiry date, valid through the end of that month), and ones whose name or notes say closed, cancelled, deactivated and similar. LastPass has no active/closed flag, so this is inference — tick anything it got wrong, and fixing an expiry in the edit panel clears the warning immediately.
-
-Only payment cards are imported — logins and secure notes in the same export are ignored. Detection doesn't rely on one exact note-type string, since LastPass files these under "Payment Cards" and has labelled them differently across versions: other spellings are accepted, and any entry carrying both a card number and a security code counts as a card. Number, cardholder, CVV, expiry, per-card notes and the favourite flag all come across; the item name becomes the card label, and the network is taken from LastPass or inferred from the number when LastPass left it blank. Cards whose number is already in the vault are skipped, so re-running an import is safe.
-
-**Add-on cards** are guessed, because LastPass has no field for them. A card whose name or notes mention "add-on", "supplementary" or similar is filed under Add-on cards; everything else lands under Your cards. It's a guess, so check the sections after importing — the toggle on the edit screen fixes any that landed wrong.
-
-The file is parsed in the page and never uploaded — importing works with no network at all. It does mean the export sitting in your Downloads folder is **plaintext card data**: delete it once the import looks right.
+The gear in the header holds the things you touch rarely: **iCloud Sync**, and **Face ID** enrolment. Enrolment only appears when this device has no passkey of its own — otherwise it says so and offers nothing to press, since re-enrolling a device that is already set up does nothing but re-run the prompt. On a device restored from iCloud where the vault already carries a passkey from elsewhere, the button reads *Link Face ID from your other device*. The build number sits at the bottom of the sheet.
 
 ## Requirements
 - **Face ID unlock** needs WebAuthn PRF: iOS/iPadOS 18+ (Safari) or a recent Chrome. If unavailable, the app silently falls back to password-only and still works.

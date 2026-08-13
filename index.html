@@ -63,35 +63,32 @@
     </div>
   </div>
 
-  <div id="import-sheet" class="sheet" hidden>
+
+  <div id="archive-sheet" class="sheet" hidden>
     <div class="sheet-card">
       <div class="sheet-h">
-        <div class="title-lg">Import from LastPass</div>
-        <button class="icon-btn" id="import-close" aria-label="Close">&times;</button>
+        <div class="title-lg">Why archive it?</div>
+        <button class="icon-btn" id="archive-close" aria-label="Close">&times;</button>
       </div>
-      <div id="import-choose">
-        <div class="hint">In the LastPass <strong>web vault on a computer</strong> (not the phone app): sidebar &rarr; Advanced&nbsp;Options &rarr; Export &rarr; LastPass CSV File.</div>
-        <button class="btn-ghost" id="import-file-btn" style="margin-top:14px">Choose CSV file</button>
-        <div class="hint" style="margin-top:14px">If LastPass showed the export as text on screen instead of downloading a file, select all of it and paste it here:</div>
-        <textarea id="import-text" rows="6" placeholder="url,username,password,totp,extra,name,grouping,fav&#10;..." style="margin-top:8px"></textarea>
-        <button class="btn-ghost" id="import-paste-go" style="margin-top:8px">Read export</button>
-        <div class="hint" style="margin-top:10px">Only payment cards are read &mdash; logins and notes are ignored. Nothing is uploaded; the text is parsed on this device.</div>
-      </div>
-
-      <div id="import-pick" hidden>
-        <div class="hint" id="import-summary"></div>
-        <div class="pick-actions">
-          <button class="link" id="import-all">Select all</button>
-          <button class="link" id="import-none">Select none</button>
-        </div>
-        <div id="import-list"></div>
-        <button class="btn-primary" id="import-commit" style="margin-top:14px">Import</button>
-        <button class="link" id="import-back" style="margin-top:10px">Back</button>
-      </div>
+      <div class="hint">The card is kept with its details intact, out of your main list.</div>
+      <div class="stack" style="max-width:none" id="archive-reasons"></div>
     </div>
   </div>
 
-  <input type="file" id="lp-file" accept=".csv,text/csv,text/plain" hidden />
+  <div id="settings-sheet" class="sheet" hidden>
+    <div class="sheet-card">
+      <div class="sheet-h">
+        <div class="title-lg">Settings</div>
+        <button class="icon-btn" id="settings-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="stack" style="max-width:none">
+        <button class="btn-ghost" id="settings-sync">iCloud Sync</button>
+        <button class="btn-ghost" id="settings-face" hidden>Set up Face ID</button>
+      </div>
+      <div class="hint" id="settings-face-note"></div>
+      <div class="hint" id="settings-version"></div>
+    </div>
+  </div>
 
   <!-- Outside #app, like the sheets above: re-rendering #app must not drop it. -->
   <div id="update-bar" hidden>
