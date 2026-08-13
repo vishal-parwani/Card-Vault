@@ -624,15 +624,21 @@ function go(name, cardId = null) { VIEW = { name, cardId }; render(); reassertUp
    injected into #apple-sign-in-button by CloudKit and must survive redraws. */
 let SHEET_OPEN = false;
 
+/* Apple expires the sign-in rather than us dropping it, so distinguish the two:
+   having signed in before means this is an expiry, which is routine. */
+const signedOutText = () =>
+  (CloudSync.everSignedIn && CloudSync.everSignedIn())
+    ? "iCloud sign-in expired" : "Not signed in to iCloud";
+
 function syncStateText() {
   if (!CloudSync.isConfigured()) return "Not configured";
   switch (SYNC.status) {
     case "syncing": return "Syncing…";
-    case "signedout": return "Not signed in to iCloud";
+    case "signedout": return signedOutText();
     case "fork": return "Conflict";
     case "error": return "Sync problem";
     case "ok": return `Synced to ${CloudSync.who()}`;
-    default: return CloudSync.signedIn() ? `Signed in as ${CloudSync.who()}` : "Not signed in to iCloud";
+    default: return CloudSync.signedIn() ? `Signed in as ${CloudSync.who()}` : signedOutText();
   }
 }
 
@@ -655,6 +661,7 @@ function renderSyncSheet() {
   const nowBtn = document.getElementById("sync-now");
   if (nowBtn) nowBtn.disabled = SYNC.status === "syncing" || !CloudSync.signedIn();
 
+
   const diagEl = document.getElementById("sync-diag");
   if (diagEl) {
     let text;
@@ -668,11 +675,16 @@ function renderSyncSheet() {
     diagEl.value = text; // textarea, so it stays selectable if clipboard is denied
   }
 
-  set("sync-hint", configured
-    ? (SYNC.last
+  /* Signed out, the useful thing to say is not the privacy boilerplate but why
+     it happened: Apple ends the session after 30 minutes unless the checkbox on
+     its own sign-in page was ticked, and nothing this app does can extend it. */
+  set("sync-hint", !configured
+    ? "Add your CloudKit container and API token to sync-config.js, then redeploy. Until then the vault stays on this device only."
+    : !CloudSync.signedIn()
+      ? "Tick “Keep me signed in” on Apple’s sign-in page: without it iCloud ends the session after 30 minutes, with it you stay signed in for two weeks. Your cards stay on this device either way — only syncing pauses."
+      : SYNC.last
         ? `Last synced ${new Date(SYNC.last).toLocaleTimeString()}. Only encrypted data is uploaded — your master password never leaves this device.`
-        : "Only encrypted data is uploaded — your master password never leaves this device, and Apple can't read your cards.")
-    : "Add your CloudKit container and API token to sync-config.js, then redeploy. Until then the vault stays on this device only.");
+        : "Only encrypted data is uploaded — your master password never leaves this device, and Apple can't read your cards.");
 }
 
 
@@ -1353,6 +1365,50 @@ document.addEventListener("input", (e) => {
   renderCards();
 });
 
+/* Opening search and changing your mind used to leave the field parked in the
+   header until you went back and tapped the magnifier again. It now folds away
+   as soon as focus leaves it — but only while empty, since closing also clears
+   the query, and dropping a live filter because you tapped a card would be its
+   own kind of rude. */
+function closeSearch() {
+  if (!SEARCH_OPEN) return;
+  SEARCH_OPEN = false;
+  SEARCH = "";
+  /* Removed directly rather than through render(): rebuilding #app would
+     replace the card tiles, and a tap already on its way to one would land on
+     whatever took its place. */
+  const wrap = document.querySelector(".search-wrap");
+  if (wrap) wrap.remove();
+}
+
+// focusout says where focus went, but not on iOS, where relatedTarget is null
+// for anything unfocusable. What was touched is the reliable signal.
+let lastPointerTarget = null;
+document.addEventListener("pointerdown", (e) => { lastPointerTarget = e.target; }, true);
+
+document.addEventListener("focusout", (e) => {
+  if (!e.target || e.target.id !== "card-search") return;
+  if (SEARCH.trim()) return;
+  // The magnifier already toggles; closing here as well would cancel it out.
+  const p = lastPointerTarget;
+  if (p && p.closest && p.closest("[data-searchtoggle]")) return;
+  /* Deferred past the tap that caused it. Removing the row shifts the list up,
+     and doing that between finger-down and click would move the target out
+     from under a tap aimed at a card. */
+  setTimeout(() => {
+    const box = document.getElementById("card-search");
+    if (!box || document.activeElement === box || SEARCH.trim()) return;
+    closeSearch();
+  }, 220);
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !e.target || e.target.id !== "card-search") return;
+  const wasFiltering = !!SEARCH.trim();
+  closeSearch();
+  if (wasFiltering) renderCards();  // the filter is gone; show everything again
+});
+
 // submit password on Enter
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
@@ -1480,7 +1536,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "36";
+const APP_VERSION = "37";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 
@@ -1533,13 +1589,24 @@ function showUpdateBar(on) {
   el.hidden = !on;
 }
 
-/* The worker now activates as soon as it installs, so a page can find itself
-   controlled by a newer build than the scripts it is running. Reload once when
-   that happens, so the running code and the cache never disagree. */
+/* The worker activates as soon as it installs, so a page can find itself
+   controlled by a newer build than the scripts it is running.
+
+   This used to reload the moment that happened, which quietly defeated the
+   whole update-bar design: the worker updates on the update check that runs
+   every time the app is brought back to the foreground, so returning to an
+   unlocked vault shortly after a deploy reloaded the page, dropped the
+   in-memory DEK and threw up Face ID — looking for all the world like auto-lock
+   firing seconds into a 15-second grace period.
+
+   So the reload now waits for a moment when it costs nothing. Locked, there is
+   no DEK to lose and it happens immediately; unlocked, it becomes the update
+   bar and the user decides. */
 function watchForController() {
   if (!navigator.serviceWorker.controller) return; // first install, nothing stale
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (SW_RELOADING) return;
+    if (DEK) { showUpdateBar(true); reassertUpdateBar(); return; }
     SW_RELOADING = true;
     location.reload();
   });
@@ -1573,8 +1640,14 @@ function applyUpdate() { return forceUpdate(); }
 /* ---------- auto-lock ----------
    Locking the instant the app is backgrounded made every app switch — and every
    share sheet, notification tap or file picker — cost a full unlock. The DEK now
-   survives a short absence instead, and is dropped once that runs out. */
-const LOCK_GRACE_MS = 15000;
+   survives a short absence instead, and is dropped once that runs out.
+
+   Note that not every unexpected lock is this timer. The DEK lives in memory
+   only, so anything that reloads or discards the page locks the vault whatever
+   the clock says: a service worker taking over (see watchForController, which
+   no longer does that under an unlocked vault) and iOS reclaiming the page's
+   memory while backgrounded, which no grace period can prevent. */
+const LOCK_GRACE_MS = 30000;
 let hiddenAt = 0, lockTimer = null;
 
 function cancelAutoLock() {

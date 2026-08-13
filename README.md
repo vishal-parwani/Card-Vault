@@ -14,7 +14,12 @@ A tiny offline, encrypted store for your card details — a self-hosted stand-in
 
 ## Unlocking and auto-lock
 
-**Auto-lock waits 15 seconds.** Locking the moment the app lost focus meant every app switch — and every share sheet, notification tap or file picker — cost a full unlock. The vault now survives 15 seconds of being backgrounded and locks after that. Because iOS freezes a backgrounded tab's timers, the countdown can't be trusted to fire on its own; the elapsed time is re-checked when you come back, so the grace period holds regardless of whether the timer ran.
+**Auto-lock waits 30 seconds.** Locking the moment the app lost focus meant every app switch — and every share sheet, notification tap or file picker — cost a full unlock. The vault now survives 30 seconds of being backgrounded and locks after that. Because iOS freezes a backgrounded tab's timers, the countdown can't be trusted to fire on its own; the elapsed time is re-checked when you come back, so the grace period holds regardless of whether the timer ran.
+
+**Not every unexpected lock is that timer**, and raising it won't fix the ones that aren't. The DEK lives in memory only, so anything that reloads or discards the page locks the vault whatever the clock says:
+
+- A **service worker taking over**. This was the real cause of "it asked for Face ID after five seconds": the update check runs every time the app returns to the foreground, so shortly after a deploy the new worker would claim the page, the old code reloaded itself to match, and the DEK went with it. A takeover under an unlocked vault now raises the update bar instead and leaves the reload to you; locked, there is nothing to lose and it still reloads at once.
+- **iOS reclaiming the page's memory** while the app is backgrounded, which relaunches it cold. No grace period can prevent this, and keeping the key anywhere it would survive would defeat the point of the key.
 
 **The screen is covered while you're away.** The DEK now outlives being backgrounded, so card details are still on screen when iOS takes its app-switcher snapshot. A shield is drawn over the app on the way out and removed on the way back, keeping the snapshot blank.
 
@@ -42,7 +47,7 @@ Opening a card shows **everything unmasked** — number and CVV included — sin
 
 ## Finding and arranging cards
 
-**Search** lives behind the magnifier in the header — tap it and the field appears, tap it again and it folds away along with whatever you'd typed. It filters as you type, across every field you can see: label, network, cardholder, notes, expiry and number. The number is matched on digits alone as well, so `4111 1111` finds a card stored unspaced and `41111111` finds a grouped one. Only the card area repaints on each keystroke — re-rendering the header would replace the field under the cursor and lose focus on every letter.
+**Search** lives behind the magnifier in the header — tap it and the field appears, tap it again and it folds away along with whatever you'd typed. It also folds away on its own once focus leaves it, so opening it and changing your mind doesn't leave it parked there; a field with a query in it stays, since closing clears the query and losing a live filter because you tapped a card would be worse than the clutter. Escape closes it and restores the full list. The row is removed a beat after focus leaves rather than immediately — taking it away between finger-down and tap would shift the list up and land the tap on the wrong card. It filters as you type, across every field you can see: label, network, cardholder, notes, expiry and number. The number is matched on digits alone as well, so `4111 1111` finds a card stored unspaced and `41111111` finds a grouped one. Only the card area repaints on each keystroke — re-rendering the header would replace the field under the cursor and lose focus on every letter.
 
 **Sections collapse.** Tap *Favourites*, *Your cards* or *Add-on cards* to fold one away; the count stays visible in the header. Which ones are folded is a per-device view preference, so it lives in `localStorage` and never syncs. Searching ignores collapsing — a filtered list is no place to hide matches — and the folds come back when the search is cleared.
 
@@ -61,6 +66,8 @@ Off until you configure it. Fill in `sync-config.js` (it documents each step) wi
 **What actually gets uploaded.** One record in *your* private CloudKit database, holding the AES-GCM ciphertext and the password-wrapped DEK. Apple stores opaque bytes. Your master password is never uploaded, never derived server-side, and the DEK is never uploaded unwrapped — so nobody without your password can read the vault, Apple included.
 
 **How devices reconcile.** Each card carries `createdAt`/`updatedAt`, and deletions leave a tombstone, so merging is per-card rather than last-writer-wins on the whole vault: edit on your phone and add on your iPad, and you keep both. A deleted card stays deleted instead of being resurrected by the other device (unless that device edited it *after* the deletion). Saves are guarded by CloudKit's `recordChangeTag`, so a concurrent write re-fetches, re-merges, and retries.
+
+**The sign-in expires, and that's Apple's clock.** A CloudKit web auth token lasts **30 minutes** by default, or **two weeks** if *Keep me signed in* is ticked on Apple's own sign-in page — there is no way for the app to extend it. So being asked to sign in again is routine rather than a fault, and the sheet says *iCloud sign-in expired* rather than *Not signed in* once you have signed in at least once, with the checkbox called out beneath. Signing out deliberately resets that, so the next *Not signed in* is the truth. Nothing is lost while the session is gone: the vault is on the device, and only syncing pauses.
 
 **Setting up a second device.** Open the app, tap *Already have a vault? Restore from iCloud*, sign in, then unlock with your master password. Face ID enrolment carries over on Apple devices, since iCloud Keychain syncs the passkey and its PRF output.
 

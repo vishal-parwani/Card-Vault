@@ -22,6 +22,12 @@
   const RECORD_TYPE = "Vault";
   const RECORD_NAME = "vault-v1";
   const WEB_AUTH_KEY = "cardvault.ckWebAuthToken";
+  /* Apple's web auth token is short-lived — 30 minutes unless "Keep me signed
+     in" was ticked on its sign-in page, which stretches it to two weeks. Being
+     asked to sign in again is therefore normal and not a fault, but "Not signed
+     in to iCloud" reads like the setup never happened. Remembering that it did
+     lets the app say "expired" instead, and point at the checkbox. */
+  const EVER_KEY = "cardvault.ckEverSignedIn";
 
   let webAuth = "";        // session credential from Apple, persisted locally
   let userRecordName = ""; // set once authenticated
@@ -82,7 +88,11 @@
     const next = name || "";
     const changed = userRecordName !== next;
     userRecordName = next;
+    if (next) { try { localStorage.setItem(EVER_KEY, "1"); } catch {} }
     if (changed) notify();
+  }
+  function everSignedIn() {
+    try { return localStorage.getItem(EVER_KEY) === "1"; } catch { return false; }
   }
   function clearAuth() {
     webAuth = "";
@@ -158,7 +168,13 @@
     location.href = redirectURL;
   }
 
-  function signOut() { changeTag = null; clearAuth(); }
+  // Signing out is deliberate, so forget that we were ever signed in — the next
+  // "not signed in" is then the truth rather than a stale "expired".
+  function signOut() {
+    changeTag = null;
+    clearAuth();
+    try { localStorage.removeItem(EVER_KEY); } catch {}
+  }
 
   /* ---------- record I/O ---------- */
   function firstRecord(r) { return (r && r.records && r.records[0]) || null; }
@@ -267,6 +283,7 @@
     signIn, signOut, captureWebAuthToken,
     fetchRemote, saveRemote, deleteRemote,
     ready: () => started,
+    everSignedIn,
     signedIn: () => !!userRecordName,
     who: () => (userRecordName ? "iCloud" : ""),
   };
