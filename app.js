@@ -95,6 +95,17 @@ async function decJSON(dek, blob) {
 function prfSupportedUA() {
   return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create);
 }
+
+/* Scanning is Apple's, not ours: focusing a cc-number field puts "Scan Credit
+   Card" in the QuickType bar, and the camera runs entirely inside iOS. A web
+   page cannot open that scanner itself, so all the Scan button can do is put
+   the cursor where the offer appears and say where to look. Shown only on
+   iOS/iPadOS, since nowhere else makes the offer. */
+function canScan() {
+  const ua = navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); // iPadOS masquerades as Mac
+}
 async function registerPasskey() {
   const cred = await navigator.credentials.create({
     publicKey: {
@@ -479,11 +490,13 @@ const GRADIENTS = {
      rather than the old near-blacks, so a card reads as a coloured object
      sitting on the cream page instead of a hole punched through it. Each keeps
      enough of its network's identity to stay recognisable at a glance. */
-  "Diners Club":      "linear-gradient(135deg,#5c3d2e 0%,#7a5642 55%,#3d2b1f 100%)",
+  /* Order matters here beyond looks: it is also the order of the Network
+     picker, whose first entry is what a new card defaults to. */
   "Visa":             "linear-gradient(135deg,#5b5070 0%,#7a6b8f 55%,#463d57 100%)",
   "Mastercard":       "linear-gradient(135deg,#4f6f55 0%,#6b8f71 55%,#3c5741 100%)",
   "American Express": "linear-gradient(135deg,#a86844 0%,#c4845a 55%,#8a5436 100%)",
   "RuPay":            "linear-gradient(135deg,#a5801f 0%,#c49a3c 55%,#856717 100%)",
+  "Diners Club":      "linear-gradient(135deg,#5c3d2e 0%,#7a5642 55%,#3d2b1f 100%)",
   "Other":            "linear-gradient(135deg,#6b5647 0%,#8a7365 55%,#4f3f34 100%)",
 };
 const NETWORKS = Object.keys(GRADIENTS);
@@ -579,6 +592,7 @@ const I = {
   back: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>`,
   caret: `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M9 6l6 6-6 6"/></svg>`,
   search: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9c8374" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>`,
+  camera: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#c4845a" stroke-width="1.8"><path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1.2-2h8.2l1.2 2h2.2A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.4"/></svg>`,
   cloud: (status) => {
     const c = status === "ok" ? "#c4845a" : status === "error" || status === "fork" ? "#c0603a" : "#9c8374";
     const arrows = status === "syncing"
@@ -899,26 +913,33 @@ function viewForm(editId) {
   const netOpts = NETWORKS.map((n) => `<option ${c && c.network === n ? "selected" : ""}>${n}</option>`).join("");
   app().innerHTML = `
     <button class="back" data-back>${I.back} Cancel</button>
-    <div class="title-lg" style="text-align:left;margin-bottom:18px">${c ? "Edit card" : "New card"}</div>
+    <div class="title-lg" style="text-align:left;margin-bottom:10px">${c ? "Edit card" : "New card"}</div>
     <form class="form" id="card-form" onsubmit="return false" autocomplete="on">
       <label class="fld"><span>Card label</span><input id="f-label" autocomplete="off" value="${c ? esc(c.label) : ""}" placeholder="e.g. HDFC Infinia"/></label>
-      <label class="fld"><span>Network</span>
-        <select id="f-network" ${c ? 'data-touched="1"' : ""} style="background:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:13px 15px;color:var(--txt);font-family:var(--sans);font-size:16px;">${netOpts}</select></label>
-      <label class="fld"><span>Sub-type</span><input id="f-subtype" value="${c ? esc(c.subtype || "") : ""}" placeholder="e.g. Infinite, Platinum, Magnus"/></label>
-      <label class="fld"><span>Card number</span><input id="f-number" class="mono" inputmode="numeric" autocomplete="cc-number" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/></label>
+      <div class="split">
+        <label class="fld"><span>Network</span>
+          <select id="f-network" ${c ? 'data-touched="1"' : ""}>${netOpts}</select></label>
+        <label class="fld"><span>Sub-type</span><input id="f-subtype" value="${c ? esc(c.subtype || "") : ""}" placeholder="e.g. Infinite"/></label>
+      </div>
+      <label class="fld">
+        <span class="fld-h">Card number
+          ${canScan() ? `<button type="button" class="scan-btn" id="f-scan">${I.camera} Scan</button>` : ""}</span>
+        <input id="f-number" class="mono" inputmode="numeric" autocomplete="cc-number" value="${c ? esc(c.number) : ""}" placeholder="0000 0000 0000 0000"/>
+        <div class="hint" id="f-scan-hint" hidden>Tap <b>Scan Credit Card</b> on the bar just above the keyboard.</div>
+      </label>
       <div class="split">
         <label class="fld"><span>Expiry</span><input id="f-expiry" class="mono" autocomplete="cc-exp" value="${c ? esc(c.expiry) : ""}" placeholder="MM/YY"/></label>
         <label class="fld"><span>CVV</span><input id="f-cvv" class="mono" inputmode="numeric" autocomplete="cc-csc" value="${c ? esc(c.cvv) : ""}" placeholder="•••"/></label>
       </div>
       <label class="fld"><span>Cardholder</span><input id="f-name" autocomplete="cc-name" value="${c ? esc(c.name) : ""}" placeholder="Name on card"/></label>
-      <label class="fld"><span>Notes</span><textarea id="f-notes" rows="3" placeholder="Anything else worth remembering">${c ? esc(c.notes) : ""}</textarea></label>
+      <label class="fld"><span>Notes</span><textarea id="f-notes" rows="2" placeholder="Anything else worth remembering">${c ? esc(c.notes) : ""}</textarea></label>
       <div class="split">
         <div class="toggle ${c && c.favourite ? "on" : ""}" data-t="fav"><span>Favourite</span><div class="sw"><div class="knob"></div></div></div>
         <div class="toggle ${c && c.type === "addon" ? "on" : ""}" data-t="addon"><span>Add-on card</span><div class="sw"><div class="knob"></div></div></div>
       </div>
       <div class="err" id="f-err"></div>
     </form>
-    <button class="btn-primary" data-save="${editId || ""}" style="margin-top:14px">${c ? "Save changes" : "Save card"}</button>`;
+    <button class="btn-primary" data-save="${editId || ""}" style="margin-top:10px;flex-shrink:0">${c ? "Save changes" : "Save card"}</button>`;
 }
 
 function viewWelcome() {
@@ -1286,8 +1307,22 @@ document.addEventListener("input", (e) => {
   const scanned = digits - numberDigits >= 6;
   numberDigits = digits;
   if (!scanned) return;
+  const hint = document.getElementById("f-scan-hint");
+  if (hint) hint.hidden = true;               // it arrived; stop pointing at the bar
   const cvv = document.getElementById("f-cvv");
   if (cvv && !cvv.value) setTimeout(() => { if (!cvv.value) cvv.focus(); }, 300);
+});
+
+/* All this can do is focus the field — the scanner belongs to iOS and appears
+   in the keyboard bar, which is exactly the part people never think to look at. */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("#f-scan");
+  if (!b) return;
+  e.preventDefault();
+  const n = document.getElementById("f-number");
+  const hint = document.getElementById("f-scan-hint");
+  if (hint) hint.hidden = false;
+  if (n) { n.focus(); n.click(); }
 });
 document.addEventListener("change", (e) => {
   if (!e.target) return;
@@ -1430,7 +1465,7 @@ document.addEventListener("click", (e) => {
    version that is deployed. Comparing the two is the whole update check — it
    does not depend on the browser noticing that service-worker.js changed, which
    is exactly the step iOS was failing to do. */
-const APP_VERSION = "34";
+const APP_VERSION = "35";
 
 let SW_REG = null, lastUpdateCheck = 0, SW_RELOADING = false;
 

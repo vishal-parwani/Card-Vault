@@ -38,15 +38,27 @@ body {
 
 /* buttons / inputs */
 button { font-family: var(--sans); cursor: pointer; border: none; background: none; color: inherit; }
-input {
+/* 16px is a floor, not a preference: iOS zooms the page in on any field it
+   considers smaller, so the form is made to fit by trimming padding rather
+   than type. */
+input, .fld select {
   width: 100%; background: var(--ink2); border: 1px solid var(--line);
-  border-radius: 12px; padding: 13px 15px; color: var(--txt);
+  border-radius: 12px; padding: 10px 14px; color: var(--txt);
   font-family: var(--sans); font-size: 16px; outline: none;
 }
 input.mono { font-family: var(--mono); letter-spacing: 1px; }
-input:focus { border-color: var(--gold); }
-label.fld { display:flex; flex-direction:column; gap:6px; }
+input:focus, .fld select:focus { border-color: var(--gold); }
+label.fld { display:flex; flex-direction:column; gap:4px; min-width:0; }
 label.fld span { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.8px; }
+/* Puts the Scan button on the label's own line rather than costing a row. */
+label.fld span.fld-h { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.scan-btn {
+  display:inline-flex; align-items:center; gap:5px; color:var(--gold);
+  font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+  padding:2px 0;
+}
+#f-scan-hint { margin-top:5px; font-size:11px; }
+#f-scan-hint b { color:var(--txt); font-weight:700; }
 
 .btn-primary {
   background: var(--gold); color:var(--on-accent); font-weight:600; font-size:15px;
@@ -147,7 +159,7 @@ body.dragging .scroll { overflow:hidden; }
 .card .bottom .v { font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.75); }
 
 /* detail rows */
-.back { color:var(--dim); font-size:14px; display:flex; align-items:center; gap:6px; padding:4px 0 16px; }
+.back { color:var(--dim); font-size:14px; display:flex; align-items:center; gap:6px; padding:2px 0 10px; }
 .rows { margin-top:14px; overflow-y:auto; flex:1; min-height:0; }
 .row { display:flex; justify-content:space-between; align-items:center; padding:15px 0; border-bottom:1px solid var(--line); }
 .row .k { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.8px; }
@@ -156,10 +168,12 @@ body.dragging .scroll { overflow:hidden; }
 .row .acts .icon-btn { width:34px; height:34px; border-radius:9px; }
 
 /* add form */
-.form { display:flex; flex-direction:column; gap:14px; overflow-y:auto; flex:1; min-height:0; }
-.form .split { display:flex; gap:12px; }
-.form .split > * { flex:1; }
-.toggle { flex:1; background:var(--ink2); border:1px solid var(--line); border-radius:11px; padding:12px 14px; display:flex; align-items:center; justify-content:space-between; }
+.form { display:flex; flex-direction:column; gap:10px; overflow-y:auto; flex:1; min-height:0; }
+.form .split { display:flex; gap:10px; }
+.form .split > * { flex:1; min-width:0; }
+/* An empty error slot still costs a row gap, and the form has none to spare. */
+.form .err:empty { display:none; }
+.toggle { flex:1; background:var(--ink2); border:1px solid var(--line); border-radius:11px; padding:10px 13px; display:flex; align-items:center; justify-content:space-between; }
 .toggle.on { border-color: var(--gold); }
 .toggle span { font-size:14px; color:var(--dim); }
 .toggle.on span { color: var(--txt); }
@@ -238,7 +252,7 @@ body.dragging .scroll { overflow:hidden; }
 }
 .fld textarea {
   width:100%; background:var(--ink2); border:1px solid var(--line);
-  border-radius:12px; padding:13px 15px; color:var(--txt);
+  border-radius:12px; padding:10px 14px; color:var(--txt);
   font-family:var(--sans); font-size:16px; outline:none; resize:vertical;
 }
 .fld textarea:focus { border-color: var(--gold); }
